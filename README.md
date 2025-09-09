@@ -8,4 +8,4 @@ This adds the ability for an Arduino Slave to run a number of commands issued by
 
 128: reboot slave
 
-129: pet hardware watchdog
+129: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.
