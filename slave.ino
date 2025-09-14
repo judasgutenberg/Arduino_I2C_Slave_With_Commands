@@ -1,28 +1,26 @@
-/* Gus Mueller, extended Sept 2025
- * Arduino I2C slave with GPIO read/write and command handling
- * Compatible with Raspberry Pi Pico (RP2040 + Arduino-Pico core)
- */
-
-#include "Wire.h"
-#include "hardware/watchdog.h"   // optional if you later want HW watchdog
-#include "pico/stdlib.h"         // for rp2040.reboot()
-
-
+#include <Wire.h>
 
 // ---- CONFIG ----
 #define I2C_SLAVE_ADDR 20
-#define REBOOT_PIN 7                  // pin used to reset master
-#define WATCHDOG_TIMEOUT 60000UL      // 1 minute (ms)
+#define REBOOT_PIN 7              // pin used to reset master
+#define COMMAND_REBOOT 128
+#define COMMAND_MILLIS 129
+#define COMMAND_LASTWATCHDOGREBOOT 130
+#define COMMAND_WATCHDOGREBOOTCOUNT 131
+#define COMMAND_WATCHDOGPETBASE 200
 
 // ---- STATE ----
-volatile int receivedValue = 0;
+volatile long receivedValue = 0;
 volatile long dataToSend = -1;
-
-unsigned long lastMasterSignal = 0;
 unsigned long lastWatchdogPet = 0;
+unsigned long lastWatchdogReboot = 0;
+
+unsigned long watchdogTimeout = 200;
+unsigned int rebootCount = 0;
+unsigned long timeLastPrinted = 0;
 
 // forward declarations
-void receieveEvent(int howMany);
+void receiveEvent(int howMany);
 void requestEvent();
 void handleCommand(byte command, long value);
 void writeWireLong(long val);
@@ -31,24 +29,36 @@ void setup() {
   pinMode(REBOOT_PIN, OUTPUT);
   digitalWrite(REBOOT_PIN, HIGH); // idle high
 
-  Wire.begin(I2C_SLAVE_ADDR);   // Pico supports I2C slave in Philhower core
-  Wire.onReceive(receieveEvent);
+  Wire.begin(I2C_SLAVE_ADDR);
+  Wire.onReceive(receiveEvent);
   Wire.onRequest(requestEvent);
-
+  //Serial.begin(115200);
   lastWatchdogPet = millis(); // start watchdog timer
 }
 
 void loop() {
   unsigned long now = millis();
-
-  // watchdog check
-  if ((now - lastWatchdogPet) > WATCHDOG_TIMEOUT) {
+  if(millis()-timeLastPrinted > 2000) {
+    /*
+    Serial.print(now);
+    Serial.print(" ");
+    Serial.print(lastWatchdogPet);
+    Serial.print(" ");
+    Serial.print((now-lastWatchdogPet)/1000);
+    Serial.print(" ");
+    Serial.println(watchdogTimeout);
+    Serial.print("\n");
+    */
+    timeLastPrinted = millis();
+  }
+  
+  if ((now - lastWatchdogPet) > watchdogTimeout * 1000) {
+    rebootCount++;
     // timeout -> toggle REBOOT_PIN low then high
     digitalWrite(REBOOT_PIN, LOW);
     delay(100);
     digitalWrite(REBOOT_PIN, HIGH);
-    // reset watchdog timer so it doesn’t keep firing
-    lastWatchdogPet = now;
+    lastWatchdogPet = now; // reset watchdog timer
   }
 }
 
@@ -58,71 +68,92 @@ void requestEvent() {
   writeWireLong(dataToSend);
 }
 
-void receieveEvent(int howMany) {
+
+void receiveEvent(int howMany) {
   unsigned long now = millis();
-  lastMasterSignal = now;
+  //lastWatchdogPet = now;  // any I2C traffic counts as watchdog pet //maybe not
 
-  byte byteCount = 0;
-  byte byteCursor = 0;
-  byte receivedValues[4];
-  byte destination = 0;
-  receivedValue = 0;
+  if (howMany < 1) return; // ignore empty packets
 
-  while (Wire.available()) {
-    byte byteRead = Wire.read();
-    if (byteCount == 0) {
-      destination = byteRead;
-    } else {
-      receivedValues[byteCursor++] = byteRead;
-    }
-    byteCount++;
+  byte command = Wire.read();
+  long value = 0;
+
+  int bytesRead = 0;
+  byte buffer[4];
+
+  while (Wire.available() && bytesRead < 4) {
+    buffer[bytesRead++] = Wire.read();
   }
 
-  // Build receivedValue from payload (if any)
-  for (byte i = 0; i < byteCursor; i++) {
-    receivedValue |= (receivedValues[i] << (8 * i));
+  // reconstruct long value from bytes (little-endian)
+  for (int i = 0; i < bytesRead; i++) {
+    value |= ((long)buffer[i] << (8 * i));
   }
 
-  if (destination >= 128) {
-    // ---- Handle commands ----
-    handleCommand(destination, receivedValue);
-  } else if (byteCursor > 0) {
+  if (command >= 128) {
+    handleCommand(command, value);
+
+    // Always give master a safe response in case it does a requestFrom
+    dataToSend = 0;  
+
+  } else if (bytesRead > 0) {
     // ---- Write to pin ----
-    pinMode(destination, OUTPUT);
-    if (receivedValue > 255) {
-      analogWrite(destination, receivedValue - 256); 
-    } else if (receivedValue == 0) {
-      digitalWrite(destination, LOW);
+    pinMode(command, OUTPUT);
+    if (value == 0) {
+      digitalWrite(command, LOW);
+    } else if (value > 255) {
+      analogWrite(command, value - 256);
     } else {
-      digitalWrite(destination, HIGH);
+      digitalWrite(command, HIGH);
     }
+
   } else {
     // ---- Read from pin ----
-    if (destination > 63) {
-      dataToSend = (long)analogRead(destination - 64);
+    if (command > 63) {
+      dataToSend = analogRead(command - 64);
     } else {
-      pinMode(destination, INPUT);
-      dataToSend = (long)digitalRead(destination);
+      pinMode(command, INPUT);
+      dataToSend = digitalRead(command);
     }
   }
 }
 
+
+
+
 // ---- Command handler ----
 void handleCommand(byte command, long value) {
+  //
+  Serial.print("command: ");
+  Serial.println(command);
   switch (command) {
-    case 128: // reboot slave
-      rp2040.reboot();  // Pico-safe reboot
+    case COMMAND_REBOOT:
+      lastWatchdogReboot = millis();
+      asm volatile ("jmp 0"); // software reset for AVR
       break;
 
-    case 129: // pet watchdog
-      lastWatchdogPet = millis();
+    case COMMAND_MILLIS:
+      dataToSend = millis();
       break;
 
-    // add more commands here:
-    // case 130: doSomething(value); break;
+    case COMMAND_LASTWATCHDOGREBOOT:
+      dataToSend = lastWatchdogReboot;
+      break;
+
+    case COMMAND_WATCHDOGREBOOTCOUNT:
+      dataToSend = rebootCount;
+      break;
 
     default:
-      // unknown command
+      if(command > 199 && command < 210) {
+        
+        byte watchdogTimingIndication =  command - COMMAND_WATCHDOGPETBASE;
+        watchdogTimeout = 1;
+        for (byte i = 0; i < watchdogTimingIndication; i++) { //better than pow()
+          watchdogTimeout *= 10;
+        }
+        lastWatchdogPet = millis();
+      }
       break;
   }
 }
@@ -130,9 +161,9 @@ void handleCommand(byte command, long value) {
 // ---- Utility ----
 void writeWireLong(long val) {
   byte buffer[4];
-  buffer[0] = val >> 24;
-  buffer[1] = val >> 16;
-  buffer[2] = val >> 8;
-  buffer[3] = val;
+  buffer[0] = val & 0xFF;
+  buffer[1] = (val >> 8) & 0xFF;
+  buffer[2] = (val >> 16) & 0xFF;
+  buffer[3] = (val >> 24) & 0xFF;
   Wire.write(buffer, 4);
 }
