@@ -8,9 +8,11 @@ This adds the ability for an Arduino Slave to run a number of commands issued by
 
 128: reboot slave
 
-129: return millis() value
+129: return millis() value of slave
 
-130: return millis() of last watchdog reboot
+130: return millis() of last watchdog reboot from slave
+
+131: return number of reboots since the slave booted
 
 20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  There are several pet-the-watchdog commands:
 
