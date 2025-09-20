@@ -7,17 +7,21 @@
 #define COMMAND_MILLIS 129
 #define COMMAND_LASTWATCHDOGREBOOT 130
 #define COMMAND_WATCHDOGREBOOTCOUNT 131
+#define COMMAND_LASTWATCHDOGPET 132
+#define COMMAND_LASTPETATBITE 133
 #define COMMAND_WATCHDOGPETBASE 200
 
 // ---- STATE ----
 volatile long receivedValue = 0;
 volatile long dataToSend = -1;
-unsigned long lastWatchdogPet = 0;
-unsigned long lastWatchdogReboot = 0;
+volatile unsigned long lastWatchdogPet = 0;
+volatile unsigned long lastWatchdogReboot = 0;
+volatile unsigned int lastTimeoutScale = 0;
+volatile unsigned long lastPetAtBite = 0;
 
-unsigned long watchdogTimeout = 200;
-unsigned int rebootCount = 0;
-unsigned long timeLastPrinted = 0;
+volatile unsigned long watchdogTimeout = 200;
+volatile unsigned int rebootCount = 0;
+volatile unsigned long timeLastPrinted = 0;
 
 // forward declarations
 void receiveEvent(int howMany);
@@ -54,11 +58,15 @@ void loop() {
   
   if ((now - lastWatchdogPet) > watchdogTimeout * 1000) {
     rebootCount++;
+    //Serial.println("REBOOT!!");
     // timeout -> toggle REBOOT_PIN low then high
     digitalWrite(REBOOT_PIN, LOW);
     delay(100);
     digitalWrite(REBOOT_PIN, HIGH);
+    lastPetAtBite = (now - lastWatchdogPet)/1000;
     lastWatchdogPet = now; // reset watchdog timer
+    lastWatchdogReboot = now;
+    
   }
 }
 
@@ -94,7 +102,7 @@ void receiveEvent(int howMany) {
     handleCommand(command, value);
 
     // Always give master a safe response in case it does a requestFrom
-    dataToSend = 0;  
+    //dataToSend = 0;  
 
   } else if (bytesRead > 0) {
     // ---- Write to pin ----
@@ -123,8 +131,7 @@ void receiveEvent(int howMany) {
 
 // ---- Command handler ----
 void handleCommand(byte command, long value) {
-  //
-  Serial.print("command: ");
+  //Serial.print("command: ");
   Serial.println(command);
   switch (command) {
     case COMMAND_REBOOT:
@@ -144,13 +151,25 @@ void handleCommand(byte command, long value) {
       dataToSend = rebootCount;
       break;
 
+    case COMMAND_LASTPETATBITE:
+      dataToSend = lastPetAtBite;
+      break;
+      
+    case COMMAND_LASTWATCHDOGPET:
+      dataToSend = lastWatchdogPet;
+      break;
+
     default:
       if(command > 199 && command < 210) {
         
         byte watchdogTimingIndication =  command - COMMAND_WATCHDOGPETBASE;
-        watchdogTimeout = 1;
-        for (byte i = 0; i < watchdogTimingIndication; i++) { //better than pow()
-          watchdogTimeout *= 10;
+        
+        if(lastTimeoutScale != watchdogTimingIndication && watchdogTimingIndication>2) {
+          watchdogTimeout = 1;
+          for (byte i = 0; i < watchdogTimingIndication; i++) { //better than pow()
+            watchdogTimeout *= 10;
+          }                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+          lastTimeoutScale = watchdogTimingIndication;
         }
         lastWatchdogPet = millis();
       }
