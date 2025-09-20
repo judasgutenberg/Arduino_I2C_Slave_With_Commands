@@ -55,15 +55,15 @@ void loop() {
     */
     timeLastPrinted = millis();
   }
-  
-  if ((now - lastWatchdogPet) > watchdogTimeout * 1000) {
+  unsigned int secondsLate = (now - lastWatchdogPet)/1000;
+  if (secondsLate > watchdogTimeout && secondsLate < 40000) {
     rebootCount++;
     //Serial.println("REBOOT!!");
     // timeout -> toggle REBOOT_PIN low then high
     digitalWrite(REBOOT_PIN, LOW);
     delay(100);
     digitalWrite(REBOOT_PIN, HIGH);
-    lastPetAtBite = (now - lastWatchdogPet)/1000;
+    lastPetAtBite = secondsLate;
     lastWatchdogPet = now; // reset watchdog timer
     lastWatchdogReboot = now;
     
@@ -164,7 +164,7 @@ void handleCommand(byte command, long value) {
         
         byte watchdogTimingIndication =  command - COMMAND_WATCHDOGPETBASE;
         
-        if(lastTimeoutScale != watchdogTimingIndication && watchdogTimingIndication>2) {
+        if(lastTimeoutScale != watchdogTimingIndication) {
           watchdogTimeout = 1;
           for (byte i = 0; i < watchdogTimingIndication; i++) { //better than pow()
             watchdogTimeout *= 10;
