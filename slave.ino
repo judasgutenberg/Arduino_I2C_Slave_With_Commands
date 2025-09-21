@@ -55,7 +55,7 @@ void loop() {
     */
     timeLastPrinted = millis();
   }
-  unsigned int secondsLate = (now - lastWatchdogPet)/1000;
+  unsigned long secondsLate = (now - lastWatchdogPet)/1000;
   if (secondsLate > watchdogTimeout && secondsLate < 40000) {
     rebootCount++;
     //Serial.println("REBOOT!!");
@@ -64,7 +64,7 @@ void loop() {
     delay(100);
     digitalWrite(REBOOT_PIN, HIGH);
     lastPetAtBite = secondsLate;
-    lastWatchdogPet = now; // reset watchdog timer
+    //lastWatchdogPet = now; // reset watchdog timer
     lastWatchdogReboot = now;
     
   }
