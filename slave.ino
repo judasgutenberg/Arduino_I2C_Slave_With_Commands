@@ -9,6 +9,7 @@
 #define COMMAND_WATCHDOGREBOOTCOUNT 131
 #define COMMAND_LASTWATCHDOGPET 132
 #define COMMAND_LASTPETATBITE 133
+#define COMMAND_REBOOTMASTER 134
 #define COMMAND_WATCHDOGPETBASE 200
 
 // ---- STATE ----
@@ -57,17 +58,21 @@ void loop() {
   }
   unsigned long secondsLate = (now - lastWatchdogPet)/1000;
   if (secondsLate > watchdogTimeout && secondsLate < 40000) {
+    rebootMaster();
+    lastPetAtBite = secondsLate;
+    lastWatchdogPet = now; // gotta do this or master will not be allowed to start
+    lastWatchdogReboot = now;
+    
+  }
+}
+
+void rebootMaster() {
     rebootCount++;
     //Serial.println("REBOOT!!");
     // timeout -> toggle REBOOT_PIN low then high
     digitalWrite(REBOOT_PIN, LOW);
     delay(100);
     digitalWrite(REBOOT_PIN, HIGH);
-    lastPetAtBite = secondsLate;
-    //lastWatchdogPet = now; // reset watchdog timer
-    lastWatchdogReboot = now;
-    
-  }
 }
 
 // ---- I2C callbacks ----
@@ -159,6 +164,10 @@ void handleCommand(byte command, long value) {
       dataToSend = lastWatchdogPet;
       break;
 
+    case COMMAND_REBOOTMASTER:
+      rebootMaster();
+      break;
+      
     default:
       if(command > 199 && command < 210) {
         
