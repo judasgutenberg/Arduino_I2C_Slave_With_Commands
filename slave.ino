@@ -1,4 +1,7 @@
 #include <Wire.h>
+#include <avr/wdt.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
 
 // ---- CONFIG ----
 #define I2C_SLAVE_ADDR 20
@@ -23,12 +26,27 @@ volatile unsigned long lastPetAtBite = 0;
 volatile unsigned long watchdogTimeout = 200;
 volatile unsigned int rebootCount = 0;
 volatile unsigned long timeLastPrinted = 0;
+volatile byte deferredCommand = 0;
 
 // forward declarations
 void receiveEvent(int howMany);
 void requestEvent();
 void handleCommand(byte command, long value);
 void writeWireLong(long val);
+
+// ---- Early init hook ----
+// Initialize Wire as early as possible and register callbacks.
+// IMPORTANT: do NOT call sei() here. Let Arduino core manage global interrupts.
+extern "C" void initVariant(void) {
+  // initialize Wire early so the TWI hardware and Wire internals are configured
+  // before any master traffic arrives after reset.
+  Wire.begin(I2C_SLAVE_ADDR);          // let Wire set TWAR/TWCR etc.
+  Wire.onReceive(receiveEvent);
+  Wire.onRequest(requestEvent);
+
+  // do NOT call sei() here — interrupts will be enabled by the core later.
+  // Avoid touching TWCR/TWAR directly here when using Wire.
+}
 
 void setup() {
   pinMode(REBOOT_PIN, OUTPUT);
@@ -63,6 +81,10 @@ void loop() {
     lastWatchdogPet = now; // gotta do this or master will not be allowed to start
     lastWatchdogReboot = now;
     
+  }
+  if(deferredCommand == 128) { //have to do this asynchronously so as not to fuck up I2C bus
+    software_reset();
+    deferredCommand = 0;
   }
 }
 
@@ -140,8 +162,7 @@ void handleCommand(byte command, long value) {
   Serial.println(command);
   switch (command) {
     case COMMAND_REBOOT:
-      lastWatchdogReboot = millis();
-      asm volatile ("jmp 0"); // software reset for AVR
+      deferredCommand = command;
       break;
 
     case COMMAND_MILLIS:
@@ -189,6 +210,18 @@ void handleCommand(byte command, long value) {
       }
       break;
   }
+}
+
+void software_reset(void) {
+  return;  //let's not!
+  cli(); // stop interrupts
+  // Disable TWI before reset
+  TWCR = 0;
+  DDRC &= ~((1<<PC4) | (1<<PC5)); // SDA = PC4, SCL = PC5 on many AVRs
+  PORTC |= (1<<PC4) | (1<<PC5);   // enable pull-ups so lines go high
+  // Use watchdog to reset
+  wdt_enable(WDTO_15MS);
+  while (1) { }
 }
 
 // ---- Utility ----
