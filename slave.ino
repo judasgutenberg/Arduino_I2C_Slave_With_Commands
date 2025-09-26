@@ -165,7 +165,12 @@ void handleCommand(byte command, long value) {
       break;
 
     case COMMAND_REBOOTMASTER:
+      TWCR &= ~(_BV(TWEN)); // disable I2C hardware
+      delay(100);
       rebootMaster();
+      delay(200); // keep bus released while master resets
+      TWCR |= _BV(TWEN); // re-enable
+      
       break;
       
     default:
