@@ -1,3 +1,5 @@
+//this is code to be used by your master to store values in the EEPROM of your slave
+
 #include <Wire.h>
 
 // assume slave_i2c is defined somewhere in your config
@@ -200,3 +202,4 @@ void setup() {
 void loop() {
     // nothing
 }
+
