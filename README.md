@@ -20,6 +20,14 @@ This adds the ability for an Arduino Slave to run a number of commands issued by
 
 134: make slave reboot the master now
 
+150: set pointer for EEPROM read/write
+
+151: sequential EEPROM write mode
+
+152: sequential EEPROM read mode
+
+153: exit EEPROM mode, back to default behavior
+
 20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  There are several pet-the-watchdog commands:
 
 200: pets the watchdog, telling it that it must be petted once per second or it can bite (reset!) -- that's way too fast, don't do that.
