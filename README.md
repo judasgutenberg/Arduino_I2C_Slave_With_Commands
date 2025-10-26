@@ -32,7 +32,7 @@ This adds the ability for an Arduino Slave to run a number of commands issued by
 
 200: pets the watchdog, telling it that it must be petted once per second or it can bite (reset!) -- that's way too fast, don't do that.
 
-201:  pets the watchdog, telling it that it must be petted once per every ten seconds or it can bite (reset!) -- that's a bit too fast, so probably not too useful.
+201: pets the watchdog, telling it that it must be petted once per every ten seconds or it can bite (reset!) -- that's a bit too fast, so probably not too useful.
 
 202: pets the watchdog, telling it that it must be petted once every 100 seconds or it can bite (reset!) -- that's a workable rate, but it's a bit too fussy.
 
