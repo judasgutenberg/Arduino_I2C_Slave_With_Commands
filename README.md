@@ -43,4 +43,4 @@ This adds the ability for an Arduino Slave to run a number of commands issued by
 205: pets the watchdog, telling it that it must be petted once every 100000 seconds or it can bite (reset!) -- only requires a pet once every day.  Useful, but not super responsive if the master should lock up.
 
 
-Since an Atmega328 has a kilobyte of EEPROM, this can be used to store semi-volatile configuration data fpr a master, as EEPROM has much better wear characteristics than flash (the only storage option on a stock ESP32 or ESP8266 board).
+Since an Atmega328 has a kilobyte of EEPROM, this can be used to store semi-volatile configuration data for a master, as EEPROM has much better wear characteristics than flash (the only storage option on a stock ESP32 or ESP8266 board).
