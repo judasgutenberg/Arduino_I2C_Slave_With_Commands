@@ -125,9 +125,9 @@ void receiveEvent(int howMany) {
     long value = 0;
 
     int bytesRead = 0;
-    byte buffer[4];
+    byte buffer[32];
 
-    while (Wire.available() && bytesRead < 4) {
+    while (Wire.available() && bytesRead < 32) {
         buffer[bytesRead++] = Wire.read();
     }
 
@@ -147,6 +147,13 @@ void receiveEvent(int howMany) {
                 if (bytesRead > 0) {
                     for (int i = 0; i < bytesRead; i++) {
                         EEPROM.write(eepromAddress, buffer[i]);
+
+                        // stop writing if terminator was written
+                        if (buffer[i] == 0) {
+                          eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+                          break;
+                        }
+                        
                         eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
                     }
                 }
