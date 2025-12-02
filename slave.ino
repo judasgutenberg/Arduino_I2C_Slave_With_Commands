@@ -106,7 +106,7 @@ void rebootMaster() {
     delay(100);
     digitalWrite(REBOOT_PIN, HIGH);
 }
-a
+
 // ---- I2C Callbacks ----
 void requestEvent() {
     if (eepromMode == 2) { // sequential EEPROM read
