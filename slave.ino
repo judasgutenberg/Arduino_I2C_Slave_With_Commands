@@ -147,12 +147,6 @@ void receiveEvent(int howMany) {
                 if (bytesRead > 0) {
                     for (int i = 0; i < bytesRead; i++) {
                         EEPROM.write(eepromAddress, buffer[i]);
-
-                        // stop writing if terminator was written
-                        if (buffer[i] == 0) {
-                          eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
-                          break;
-                        }
                         
                         eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
                     }
