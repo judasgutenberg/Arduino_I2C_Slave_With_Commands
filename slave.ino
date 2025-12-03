@@ -38,6 +38,7 @@ volatile unsigned long watchdogTimeout = 200;
 volatile unsigned int rebootCount = 0;
 volatile unsigned long timeLastPrinted = 0;
 volatile byte deferredCommand = 0;
+volatile byte eepromReadCount = 1; 
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -58,6 +59,7 @@ extern "C" void initVariant(void) {
 
 // ---- Setup ----
 void setup() {
+    //Serial.begin(115200);
     pinMode(REBOOT_PIN, OUTPUT);
     digitalWrite(REBOOT_PIN, HIGH); // idle high
 
@@ -109,17 +111,22 @@ void rebootMaster() {
 
 // ---- I2C Callbacks ----
 void requestEvent() {
-    if (eepromMode == 2) { // sequential EEPROM read
-        byte val = EEPROM.read(eepromAddress);
-        Wire.write(val);
-        eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
-    } else {
-        writeWireLong(dataToSend); // normal behavior
+  if (eepromMode == 2) {
+    for (int i = 0; i < eepromReadCount; i++) {
+      Wire.write( EEPROM.read(eepromAddress) );
+      eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
     }
+    // Optional: reset mode
+    eepromMode = 0;
+  } else {
+    writeWireLong(dataToSend);
+  }
 }
 
 void receiveEvent(int howMany) {
-    if (howMany < 1) return;
+    if (howMany < 1) {
+      return;
+    }
 
     byte command = Wire.read();
     long value = 0;
@@ -135,8 +142,11 @@ void receiveEvent(int howMany) {
         value |= ((long)buffer[i] << (8 * i));
     }
 
+
+
     // ---- EEPROM Commands ----
     if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
+        Serial.println("SPECIAL COMMAND!");
         switch (command) {
             case COMMAND_EEPROM_SETADDR:
                 eepromAddress = value & 0x03FF; // 0..1023
@@ -147,14 +157,15 @@ void receiveEvent(int howMany) {
                 if (bytesRead > 0) {
                     for (int i = 0; i < bytesRead; i++) {
                         EEPROM.write(eepromAddress, buffer[i]);
-                        
                         eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+                        
                     }
                 }
                 break;
 
             case COMMAND_EEPROM_READ:
                 eepromMode = 2;
+                eepromReadCount = value;
                 break;
 
             case COMMAND_EEPROM_NORMAL:
