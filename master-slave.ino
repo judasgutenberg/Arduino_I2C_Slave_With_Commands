@@ -1,87 +1,15 @@
-//this is code to be used by your master to store values in the EEPROM of your slave
+//a library of functions to communicate with the i2cslave
 
 #include <Wire.h>
-
-// assume slave_i2c is defined somewhere in your config
-extern uint8_t slave_i2c;
+#include "i2cslave.h"
+#include <Arduino.h>
 
 #define COMMAND_EEPROM_SETADDR 150
 #define COMMAND_EEPROM_WRITE   151
 #define COMMAND_EEPROM_READ    152
 #define COMMAND_EEPROM_NORMAL  153
-
-// ---- Write a string to slave EEPROM (optimized) ----
-void writeStringToSlaveEEPROM(uint16_t eepromAddr, const char* str) {
-    // Set EEPROM address
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_SETADDR);
-    Wire.write((eepromAddr >> 8) & 0xFF);
-    Wire.write(eepromAddr & 0xFF);
-    Wire.endTransmission();
-
-    // Write string in chunks (Wire buffer max 32 bytes)
-    const char* p = str;
-    while (*p) {
-        Wire.beginTransmission(slave_i2c);
-        Wire.write(COMMAND_EEPROM_WRITE);
-
-        uint8_t bytesInThisChunk = 0;
-        while (*p && bytesInThisChunk < 30) { // 30 + 1 command byte = 31 < 32 limit
-            Wire.write(*p++);
-            bytesInThisChunk++;
-        }
-
-        Wire.endTransmission();
-        delay(5); // give slave time to write EEPROM
-    }
-
-    // Null terminator
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_WRITE);
-    Wire.write(0);
-    Wire.endTransmission();
-    delay(5);
-
-    // Return slave to normal mode
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_NORMAL);
-    Wire.endTransmission();
-}
-
-// ---- Read a string from slave EEPROM ----
-void readStringFromSlaveEEPROM(uint16_t eepromAddr, char* buffer, size_t maxLen) {
-    // Set EEPROM address
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_SETADDR);
-    Wire.write((eepromAddr >> 8) & 0xFF);
-    Wire.write(eepromAddr & 0xFF);
-    Wire.endTransmission();
-
-    // Enable sequential read
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_READ);
-    Wire.endTransmission();
-
-    size_t count = 0;
-    while (count < maxLen - 1) {
-        Wire.requestFrom(slave_i2c, (uint8_t)1); // read 1 byte at a time
-        if (Wire.available()) {
-            char c = Wire.read();
-            if (c == 0) break;  // stop at null terminator
-            buffer[count++] = c;
-        } else {
-            break; // no more data
-        }
-    }
-    buffer[count] = '\0';
-
-    // Return slave to normal mode
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_NORMAL);
-    Wire.endTransmission();
-}
-
-
+#define EEPROM_MARKER_ADDR 0
+#define EEPROM_INT_BASE    4   // ints start immediately after "DATA"
 
 // ---- Write an int (2 bytes) ----
 void writeIntToEEPROM(uint16_t addr, int value) {
@@ -89,44 +17,59 @@ void writeIntToEEPROM(uint16_t addr, int value) {
     bytes[0] = value & 0xFF;        // LSB
     bytes[1] = (value >> 8) & 0xFF; // MSB
 
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_SETADDR);
-    Wire.write((addr >> 8) & 0xFF);
-    Wire.write(addr & 0xFF);
-    Wire.endTransmission();
+ 
+    setAddress(addr); 
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_WRITE);
     Wire.write(bytes[0]);
     Wire.write(bytes[1]);
     Wire.endTransmission();
     delay(5);
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_NORMAL);
     Wire.endTransmission();
 }
 
-// ---- Read an int (2 bytes) ----
-int readIntFromEEPROM(uint16_t addr) {
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_SETADDR);
-    Wire.write((addr >> 8) & 0xFF);
-    Wire.write(addr & 0xFF);
-    Wire.endTransmission();
+char readByteFromEEPROM(uint16_t addr) {
+    setAddress(addr); 
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_READ);
+    Wire.write(1);
     Wire.endTransmission();
 
     int value = 0;
-    Wire.requestFrom(slave_i2c, (uint8_t)2);
+    Wire.requestFrom(ci[SLAVE_I2C], (uint8_t)2);
+    if (Wire.available() >= 1) {
+        value = Wire.read();
+    }
+
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_NORMAL);
+    Wire.endTransmission();
+
+    return value;
+}
+
+// ---- Read an int (2 bytes) ----
+int readIntFromEEPROM(uint16_t addr) {
+    setAddress(addr); 
+
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_READ);
+    Wire.write(2);
+    Wire.endTransmission();
+
+    int value = 0;
+    Wire.requestFrom(ci[SLAVE_I2C], (uint8_t)2);
     if (Wire.available() >= 2) {
         value = Wire.read();
         value |= (Wire.read() << 8);
     }
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_NORMAL);
     Wire.endTransmission();
 
@@ -141,37 +84,30 @@ void writeLongToEEPROM(uint16_t addr, long value) {
     bytes[2] = (value >> 16) & 0xFF;
     bytes[3] = (value >> 24) & 0xFF;
 
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_SETADDR);
-    Wire.write((addr >> 8) & 0xFF);
-    Wire.write(addr & 0xFF);
-    Wire.endTransmission();
+    setAddress(addr); 
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_WRITE);
     Wire.write(bytes, 4);
     Wire.endTransmission();
     delay(5);
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_NORMAL);
     Wire.endTransmission();
 }
 
 // ---- Read a long (4 bytes) ----
 long readLongFromEEPROM(uint16_t addr) {
-    Wire.beginTransmission(slave_i2c);
-    Wire.write(COMMAND_EEPROM_SETADDR);
-    Wire.write((addr >> 8) & 0xFF);
-    Wire.write(addr & 0xFF);
-    Wire.endTransmission();
+    setAddress(addr); 
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_READ);
+    Wire.write(4);
     Wire.endTransmission();
 
     long value = 0;
-    Wire.requestFrom(slave_i2c, (uint8_t)4);
+    Wire.requestFrom(ci[SLAVE_I2C], (uint8_t)4);
     if (Wire.available() >= 4) {
         value = Wire.read();
         value |= ((long)Wire.read() << 8);
@@ -179,27 +115,288 @@ long readLongFromEEPROM(uint16_t addr) {
         value |= ((long)Wire.read() << 24);
     }
 
-    Wire.beginTransmission(slave_i2c);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
     Wire.write(COMMAND_EEPROM_NORMAL);
     Wire.endTransmission();
 
     return value;
 }
 
+void writeStringToEEPROM(uint16_t addr, const char* str) {
+    if (!str) str = ""; // ensure non-null pointer
 
-// ---- Example usage ----
-void setup() {
-    Wire.begin(); // master
-    Serial.begin(9600);
+    // 1. Set EEPROM start address
+    setAddress(addr);
 
-    writeStringToSlaveEEPROM(0x0000, "Hello, optimized I2C EEPROM!");
+    // 2. Send the string in chunks
+    const char* p = str;
+    while (true) {
+        Wire.beginTransmission(ci[SLAVE_I2C]);
+        Wire.write(COMMAND_EEPROM_WRITE);
 
-    char buf[50];
-    readStringFromSlaveEEPROM(0x0000, buf, sizeof(buf));
-    Serial.println(buf);
+        // send up to 31 bytes per transaction
+        uint8_t bytesThisChunk = 0;
+        for (; bytesThisChunk < 31; bytesThisChunk++) {
+            Wire.write(*p);
+            if (*p == 0) { // write null terminator and stop
+                break;
+            }
+            p++;
+        }
+
+        Wire.endTransmission();
+        delay(5);
+
+        // stop outer loop if null terminator was sent
+        if (*(p) == 0) break;
+
+        // in case the string length exceeds 31, continue in next iteration
+        p++; // move past last byte sent
+    }
+
+    // 3. Return slave to normal mode
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_NORMAL);
+    Wire.endTransmission();
 }
 
-void loop() {
-    // nothing
+
+void readStringFromSlaveEEPROM(uint16_t addr, char* buffer, size_t maxLen) {
+    // Set EEPROM address
+    setAddress(addr); 
+
+    // Enable sequential read
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_READ);
+    Wire.endTransmission();
+
+    size_t count = 0;
+    while (count < maxLen - 1) {
+        Wire.requestFrom(ci[SLAVE_I2C], (uint8_t)1); // read 1 byte at a time
+        if (Wire.available()) {
+            char c = Wire.read();
+            if (c == 0) break;  // stop at null terminator
+            buffer[count++] = c;
+        } else {
+            break; // no more data
+        }
+    }
+    buffer[count] = '\0';
+
+    // Return slave to normal mode
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_NORMAL);
+    Wire.endTransmission();
 }
 
+void readBytesFromSlaveEEPROM(uint16_t addr, char* buffer, size_t maxLen) {
+    // Set EEPROM address
+    setAddress(addr); 
+
+    // Enable sequential read
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_READ);
+    Wire.endTransmission();
+
+    size_t count = 0;
+    while (count < maxLen - 2) { // -2 because each byte becomes 2 chars
+        Wire.requestFrom(ci[SLAVE_I2C], (uint8_t)1); // read 1 byte at a time
+        if (Wire.available()) {
+            uint8_t b = Wire.read();
+            if (b == 0) break; // stop at null terminator
+    
+            // Convert byte to two hex characters
+            char hex[3]; // 2 chars + null terminator
+            sprintf(hex, "%02X", b); // uppercase hex, always 2 digits
+    
+            // Append to buffer
+            buffer[count++] = hex[0];
+            if (count < maxLen - 1) { // ensure space for second char and null
+                buffer[count++] = hex[1];
+            } else {
+                break; // no more space
+            }
+        } else {
+            break; // no more data
+        }
+    }
+ 
+    buffer[count] = '\0';
+
+    // Return slave to normal mode
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_NORMAL);
+    Wire.endTransmission();
+}
+
+
+void saveAllConfigToEEPROM() {
+    uint16_t addr = EEPROM_MARKER_ADDR;
+    if(ci[SLAVE_I2C] < 1) {
+      return;
+    }
+    // ============================================================
+    // 1. Write marker "DATA"
+    // ============================================================
+    writeStringToEEPROM(addr, "DATA");
+    addr += 5; // includes null terminator
+
+    // ============================================================
+    // 2. Write integer config array (ci[])
+    // ============================================================
+    for (int i = 0; i < CONFIG_TOTAL_COUNT; i++) {
+        writeIntToEEPROM(addr, ci[i]);
+        addr += 2;                // 2 bytes per int
+    }
+
+    // ============================================================
+    // 3. Write strings (null-terminated)
+    // ============================================================
+    for (int i = 0; i < CONFIG_STRING_COUNT; i++) {
+        const char* s = cs[i];
+        if (s == NULL) s = "";
+    
+        writeStringToEEPROM(addr, s);
+        addr += strlen(s) + 1;
+    }
+}
+
+
+
+bool loadAllConfigFromEEPROM(bool justDisplay) {
+    uint16_t addr = 0;
+    if(ci[SLAVE_I2C] < 1) {
+      return false;
+    }
+    // ============================================================
+    // 1. Read marker (must be "DATA")
+    // ============================================================
+    char marker[5];
+    for (int i = 0; i < 5; i++) {
+        marker[i] =  readByteFromEEPROM(addr + i); // 1 byte per location
+    }
+    marker[4] = '\0';
+
+    if (strcmp(marker, "DATA") != 0) {
+        // No valid data stored
+        return false;
+    }
+
+    addr += 5;  // Skip marker + null
+
+    // ============================================================
+    // 2. Read all integer configs
+    // ============================================================
+    for (int i = 0; i < CONFIG_TOTAL_COUNT; i++) {
+        if(!justDisplay) {
+          ci[i] = readIntFromEEPROM(addr);
+        } else {
+          Serial.println(ci[i]);
+          
+        }
+        addr += 2;
+    }
+
+    // ============================================================
+    // 3. Read all string configs
+    // ============================================================
+    for (int i = 0; i < CONFIG_STRING_COUNT; i++) {
+
+        // Read characters until null terminator
+        char buffer[128];  // safe max length per string
+        int pos = 0;
+
+        while (pos < 127) {  // leave space for null
+            uint8_t b = (uint8_t)readByteFromEEPROM(addr); // reading 1 byte
+            addr += 1;
+            //Serial.print((char)b);
+            buffer[pos++] = b;
+            if (b == 0) break;   // end of string
+        }
+        buffer[127] = 0;
+
+        // Copy into dynamically allocated cs[i]
+        size_t len = strlen(buffer);
+        if(!justDisplay) {
+          cs[i] = (char*)malloc(len + 1);
+          strcpy(cs[i], buffer);
+        } else {
+          Serial.println(cs[i]);
+        }
+        
+    }
+
+    return true;
+}
+
+void setAddress(uint16_t addr) {
+    Wire.beginTransmission((uint8_t)ci[SLAVE_I2C]);
+    Wire.write((uint8_t)COMMAND_EEPROM_SETADDR);
+    Wire.write((uint8_t)addr & 0xFF);        // low byte
+    Wire.write((uint8_t)((addr >> 8) & 0xFF)); // high byte
+    Wire.endTransmission();
+}
+
+///tests/////////////
+
+
+void testWrite() {
+    uint16_t addr = 100;
+
+    // 1. Set address
+    setAddress(addr);
+
+    delay(5);
+
+    // 2. Write 4 data bytes
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_WRITE);
+    Wire.write(19);
+    Wire.write(29);
+    Wire.write(39);
+    Wire.write(49);
+    Wire.write(59);
+    Wire.write(69);
+    Wire.endTransmission();
+
+    delay(5);
+
+    // 3. Back to normal
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_NORMAL);
+    Wire.endTransmission();
+}
+ 
+void testRead() {
+    uint16_t addr = 100;
+
+    // 1. Set address for reading
+    setAddress(addr);
+
+    delay(5);
+
+    // 2. Enter READ mode
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_READ);
+    Wire.write(4);
+    Wire.endTransmission();
+
+    delay(5);
+
+    // 3. Request 4 bytes
+    Wire.requestFrom(ci[SLAVE_I2C], 4);
+
+    Serial.println("\n\nEEPROM readback:");
+
+    for (int i = 0; i < 4; i++) {
+        if (Wire.available()) {
+            byte b = Wire.read();
+            Serial.println(b);
+        }
+    }
+
+    // 4. Back to normal
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_EEPROM_NORMAL);
+    Wire.endTransmission();
+}
