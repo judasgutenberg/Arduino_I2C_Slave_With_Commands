@@ -1,4 +1,5 @@
 #include <Wire.h>
+#include <TimeLib.h>
 #include <avr/wdt.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -24,11 +25,39 @@
 #define COMMAND_EEPROM_READ     152  // sequential read mode
 #define COMMAND_EEPROM_NORMAL   153  // exit EEPROM mode, back to default behavior
 
+
+#define COMMAND_VERSION 160
+#define COMMAND_COMPILEDATETIME 161
+#define COMMAND_TEMPERATURE 162
+
+//serial commands
+#define COMMAND_SERIAL_SET_BAUD_RATE 170
+#define COMMAND_RETRIEVE_SERIAL_BUFFER 171
+#define COMMAND_POPULATE_SERIAL_BUFFER 172
+#define COMMAND_SEND_SERIAL_BUFFER 173
+
 #define EEPROM_SIZE 1024
+
+struct CircularBuffer {
+  uint8_t* data;
+  uint16_t size;
+  uint16_t head;
+  uint16_t tail;
+  uint16_t count;
+};
+
+#define RX_SIZE 400
+#define TX_SIZE 400
+
+uint8_t rxStorage[RX_SIZE];
+uint8_t txStorage[TX_SIZE];
+
+CircularBuffer rxBuffer = { rxStorage, RX_SIZE, 0, 0, 0 };
+CircularBuffer txBuffer = { txStorage, TX_SIZE, 0, 0, 0 };
 
 // ---- STATE ----
 volatile long receivedValue = 0;
-volatile long dataToSend = -1;
+volatile unsigned long dataToSend = 0;
 volatile unsigned long lastWatchdogPet = 0;
 volatile unsigned long lastWatchdogReboot = 0;
 volatile unsigned int lastTimeoutScale = 0;
@@ -39,6 +68,13 @@ volatile unsigned int rebootCount = 0;
 volatile unsigned long timeLastPrinted = 0;
 volatile byte deferredCommand = 0;
 volatile byte eepromReadCount = 1; 
+
+uint8_t eepromWriteBuffer[32];
+uint8_t eepromWriteLength = 0;
+volatile bool eepromWritePending = false;
+volatile bool retrieveSerialData = false;
+uint32_t baudRate = 0;
+bool alsoNeedAnEndByte = false;
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -60,6 +96,7 @@ extern "C" void initVariant(void) {
 // ---- Setup ----
 void setup() {
     //Serial.begin(115200);
+    //Serial.println("Started");
     pinMode(REBOOT_PIN, OUTPUT);
     digitalWrite(REBOOT_PIN, HIGH); // idle high
 
@@ -86,6 +123,34 @@ void loop() {
         Serial.print("\n");
         */
         timeLastPrinted = millis();
+    }
+
+
+    if (eepromWritePending) {
+      eepromWritePending = false;
+      for (uint8_t i = 0; i < eepromWriteLength; i++) {
+        EEPROM.update(eepromAddress, eepromWriteBuffer[i]);
+        eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+      }
+    }
+
+    if(baudRate > 0) {
+     // Serial.println("yer");
+      cbSendLatest(txBuffer);
+      
+      if (Serial.available()) {
+        uint8_t b = Serial.read();
+        cbPutByte(rxBuffer, b, 1);
+        alsoNeedAnEndByte = true;
+        delay(1);
+        yield();
+      }
+      
+      if (alsoNeedAnEndByte && !Serial.available()) {
+        yield();
+        cbPutByte(rxBuffer, 0, 1); // terminator
+        alsoNeedAnEndByte = false;
+      }
     }
 
     unsigned long secondsLate = (now - lastWatchdogPet)/1000;
@@ -118,6 +183,10 @@ void requestEvent() {
     }
     // Optional: reset mode
     eepromMode = 0;
+  } else if (retrieveSerialData) {
+    //Serial.println("SENDY!");
+    cbSendLatestWire(rxBuffer, 32);
+    retrieveSerialData = false;
   } else {
     writeWireLong(dataToSend);
   }
@@ -130,23 +199,29 @@ void receiveEvent(int howMany) {
 
     byte command = Wire.read();
     long value = 0;
-
+    //Serial.println(command);
     int bytesRead = 0;
     byte buffer[32];
-
+    //Serial.println(command);
     while (Wire.available() && bytesRead < 32) {
-        buffer[bytesRead++] = Wire.read();
+        byte val = Wire.read();
+        buffer[bytesRead++] = val;
+        //Serial.print("val: ");
+        //Serial.println(val);
     }
 
     for (int i = 0; i < bytesRead; i++) {
         value |= ((long)buffer[i] << (8 * i));
     }
 
-
-
+    if (command == COMMAND_POPULATE_SERIAL_BUFFER) {
+      //Serial.println("populating serial buffer");
+      cbPutArray(txBuffer, buffer, bytesRead);
+      
+    } else if (command == COMMAND_RETRIEVE_SERIAL_BUFFER) {
+      retrieveSerialData = true;
     // ---- EEPROM Commands ----
-    if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
-        Serial.println("SPECIAL COMMAND!");
+    } else if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
         switch (command) {
             case COMMAND_EEPROM_SETADDR:
                 eepromAddress = value & 0x03FF; // 0..1023
@@ -156,13 +231,17 @@ void receiveEvent(int howMany) {
                 eepromMode = 1;
                 if (bytesRead > 0) {
                     for (int i = 0; i < bytesRead; i++) {
-                        EEPROM.write(eepromAddress, buffer[i]);
-                        eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+                        //EEPROM.update(eepromAddress, buffer[i]);
+                        //eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+
+                        eepromWriteBuffer[i] = buffer[i];
+                        eepromWritePending = true;
+                        eepromWriteLength = bytesRead;
                         
                     }
                 }
                 break;
-
+                
             case COMMAND_EEPROM_READ:
                 eepromMode = 2;
                 eepromReadCount = value;
@@ -232,6 +311,22 @@ void handleCommand(byte command, long value) {
             TWCR |= _BV(TWEN);
             break;
 
+        case COMMAND_COMPILEDATETIME:
+            dataToSend = compileUnixTime();
+            break;
+
+        case COMMAND_VERSION:
+            dataToSend = 2001;
+            break;
+
+        case COMMAND_TEMPERATURE:
+            dataToSend = readInternalTemp;
+            break;
+
+        case COMMAND_SERIAL_SET_BAUD_RATE:
+          setSerialRate(value);
+          break;
+            
         default:
             if(command > 199 && command < 210) {
                 byte watchdogTimingIndication = command - COMMAND_WATCHDOGPETBASE;
@@ -267,4 +362,154 @@ void writeWireLong(long val) {
     buffer[2] = (val >> 16) & 0xFF;
     buffer[3] = (val >> 24) & 0xFF;
     Wire.write(buffer, 4);
+}
+
+unsigned long compileUnixTime() {
+  // __DATE__ = "Dec 04 2025"
+  // __TIME__ = "14:37:05"
+  const char monthNames[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  char monthStr[4];
+  strncpy(monthStr, __DATE__, 3);
+  monthStr[3] = '\0';
+  int month = (strstr(monthNames, monthStr) - monthNames) / 3 + 1;
+  int day = atoi(__DATE__ + 4);
+  int year = atoi(__DATE__ + 7);
+  int hour = atoi(__TIME__);
+  int minute = atoi(__TIME__ + 3);
+  int second = atoi(__TIME__ + 6);
+  tmElements_t tm;
+  tm.Year = year - 1970; // TimeLib counts from 1970
+  tm.Month = month;
+  tm.Day = day;
+  tm.Hour = hour;
+  tm.Minute = minute;
+  tm.Second = second;
+  return makeTime(tm);
+}
+
+long readInternalTemp() {
+  // Enable the temperature sensor
+  ADMUX = _BV(REFS1) | _BV(REFS0) | _BV(MUX3);
+  ADCSRA |= _BV(ADEN);
+  delay(5); // Allow sensor to settle
+  // Fake conversion to settle multiplexer
+  ADCSRA |= _BV(ADSC);
+  while (ADCSRA & _BV(ADSC));
+  // Real conversion
+  ADCSRA |= _BV(ADSC);
+  while (ADCSRA & _BV(ADSC));
+  uint16_t adc = ADC;
+  // Convert according to datasheet typical values
+  // Note: Calibration varies per-chip.
+  // slope ˜ 1.22 mV/°C
+  // offset ˜ 314 mV @ 25°C
+  //
+  // Convert ADC?mV using 1.1V reference:
+  // mV = adc * 1100 / 1024
+  long millivolts = (long)adc * 1100L / 1024L;
+  // Convert mV to °C × 10:
+  // C = (mV - 314) / 1.22 + 25
+  // C10 = 10 * C
+  long C10 = ((millivolts - 314) * 100L / 122L) + 250;
+  return (int16_t)C10;
+}
+
+
+
+////////////////////////////////////////
+//serial functions
+////////////////////////////////////////
+
+void setSerialRate(byte baudRateLevel) {
+  /*
+  while(Serial.available()) {
+    Serial.read();
+  }
+  delay(2);
+  Serial.flush();
+  Serial.end();
+  */
+  //Serial.begin(115200);
+
+  uint32_t baudRates[] = {
+    0,
+    300,
+    1200,
+    2400,
+    4800,
+    9600,
+    19200,
+    38400,
+    57600,
+    115200,
+    230400,
+    250000,
+    500000,
+    1000000,
+    2000000
+  };
+  baudRate = baudRates[baudRateLevel];
+  if(baudRate > 0) {
+    Serial.begin(baudRate);
+      //Serial.println("beginnning!");
+  }
+}
+
+
+void cbSendLatest(CircularBuffer &cb) {
+  for (uint16_t i = 0; i < cb.count; i++) {
+    Serial.write(cb.data[cb.tail]);
+    cb.tail = (cb.tail + 1) % cb.size;
+  }
+  cb.count = 0;
+}
+
+void cbSendLatestWire(CircularBuffer &cb, uint16_t maxToSend) {
+  uint16_t toSend = (maxToSend < cb.count) ? maxToSend : cb.count; 
+  for (uint16_t i = 0; i < toSend; i++) {
+    //Serial.println(cb.data[cb.tail]);
+    Wire.write(cb.data[cb.tail]);
+    cb.tail = (cb.tail + 1) % cb.size;
+  }
+  cb.count -= toSend; // subtract exactly what was sent
+}
+
+void cbPutArray(CircularBuffer &cb, const uint8_t* bytes, uint16_t len) {
+  for (uint16_t i = 0; i < len; i++) {
+    cb.data[cb.head] = bytes[i];
+    //Serial.println((int)bytes[1]);
+    cb.head = (cb.head + 1) % cb.size;
+    
+    if (cb.count < cb.size) {
+      cb.count++;
+    } else {
+      // buffer full → overwrite oldest
+      cb.tail = (cb.tail + 1) % cb.size;
+    }
+  }
+}
+
+
+void cbPutByte(CircularBuffer &cb, byte inByte, uint16_t len) {
+  for (uint16_t i = 0; i < len; i++) {
+    //Serial.println(inByte);
+    cb.data[cb.head] = inByte;
+    cb.head = (cb.head + 1) % cb.size;
+    
+    if (cb.count < cb.size) {
+      cb.count++;
+    } else {
+      // buffer full → overwrite oldest
+      cb.tail = (cb.tail + 1) % cb.size;
+    }
+  }
+}
+
+
+int cbGetLatest(const CircularBuffer &cb) {
+  if (cb.count == 0)
+  return -1; // empty
+  
+  uint16_t pos = (cb.head == 0) ? (cb.size - 1) : (cb.head - 1);
+  return cb.data[pos];
 }
