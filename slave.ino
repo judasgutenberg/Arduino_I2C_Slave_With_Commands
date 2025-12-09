@@ -9,7 +9,7 @@
 #define I2C_SLAVE_ADDR 20
 #define REBOOT_PIN 7              // pin used to reset master
 
-#define VERSION 2006
+#define VERSION 2008
 
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
@@ -134,7 +134,7 @@ void loop() {
       for (uint8_t i = 0; i < eepromWriteLength; i++) {
         yield();
         //Serial.print((char)eepromWriteBuffer[i]); 
-        EEPROM.write(eepromAddress, eepromWriteBuffer[i]);
+        EEPROM.update(eepromAddress, eepromWriteBuffer[i]);
         eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
         //delay(20);
         yield();
