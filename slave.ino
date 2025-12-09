@@ -9,6 +9,8 @@
 #define I2C_SLAVE_ADDR 20
 #define REBOOT_PIN 7              // pin used to reset master
 
+#define VERSION 2006
+
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
 #define COMMAND_MILLIS 129
@@ -46,8 +48,8 @@ struct CircularBuffer {
   uint16_t count;
 };
 
-#define RX_SIZE 400
-#define TX_SIZE 400
+#define RX_SIZE 60
+#define TX_SIZE 60
 
 uint8_t rxStorage[RX_SIZE];
 uint8_t txStorage[TX_SIZE];
@@ -69,8 +71,8 @@ volatile unsigned long timeLastPrinted = 0;
 volatile byte deferredCommand = 0;
 volatile byte eepromReadCount = 1; 
 
-uint8_t eepromWriteBuffer[32];
-uint8_t eepromWriteLength = 0;
+volatile uint8_t eepromWriteBuffer[32];
+volatile uint8_t eepromWriteLength = 0;
 volatile bool eepromWritePending = false;
 volatile bool retrieveSerialData = false;
 uint32_t baudRate = 0;
@@ -128,10 +130,17 @@ void loop() {
 
     if (eepromWritePending) {
       eepromWritePending = false;
+      noInterrupts();
       for (uint8_t i = 0; i < eepromWriteLength; i++) {
-        EEPROM.update(eepromAddress, eepromWriteBuffer[i]);
+        yield();
+        //Serial.print((char)eepromWriteBuffer[i]); 
+        EEPROM.write(eepromAddress, eepromWriteBuffer[i]);
         eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+        //delay(20);
+        yield();
       }
+      interrupts();
+      //Serial.println("*");
     }
 
     if(baudRate > 0) {
@@ -139,11 +148,13 @@ void loop() {
       cbSendLatest(txBuffer);
       
       if (Serial.available()) {
+        noInterrupts();
         uint8_t b = Serial.read();
         cbPutByte(rxBuffer, b, 1);
         alsoNeedAnEndByte = true;
         delay(1);
         yield();
+        interrupts();
       }
       
       if (alsoNeedAnEndByte && !Serial.available()) {
@@ -178,7 +189,10 @@ void rebootMaster() {
 void requestEvent() {
   if (eepromMode == 2) {
     for (int i = 0; i < eepromReadCount; i++) {
-      Wire.write( EEPROM.read(eepromAddress) );
+      Wire.write(EEPROM.read(eepromAddress));
+      //Serial.print(eepromAddress);
+      //Serial.print(": ");
+      //Serial.println(EEPROM.read(eepromAddress));
       eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
     }
     // Optional: reset mode
@@ -233,16 +247,22 @@ void receiveEvent(int howMany) {
                     for (int i = 0; i < bytesRead; i++) {
                         //EEPROM.update(eepromAddress, buffer[i]);
                         //eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
-
+                        //Serial.print((char)buffer[i]); 
                         eepromWriteBuffer[i] = buffer[i];
-                        eepromWritePending = true;
+                        
                         eepromWriteLength = bytesRead;
                         
                     }
+                    //Serial.println("^");
+                    eepromWritePending = true;
                 }
+                
                 break;
                 
             case COMMAND_EEPROM_READ:
+                //Serial.print("EEPROM READ MODE");
+                //Serial.print(": ");
+                //Serial.println((int)value);
                 eepromMode = 2;
                 eepromReadCount = value;
                 break;
@@ -316,7 +336,7 @@ void handleCommand(byte command, long value) {
             break;
 
         case COMMAND_VERSION:
-            dataToSend = 2001;
+            dataToSend = VERSION;
             break;
 
         case COMMAND_TEMPERATURE:
