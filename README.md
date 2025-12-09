@@ -28,6 +28,12 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 153: exit EEPROM mode, back to default behavior
 
+170: set serial baud rate and start serial port
+
+171: retrieve data from serial buffer
+
+172: populate serial buffer for transmission
+
 20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  There are several pet-the-watchdog commands:
 
 200: pets the watchdog, telling it that it must be petted once per second or it can bite (reset!) -- that's way too fast, don't do that.
