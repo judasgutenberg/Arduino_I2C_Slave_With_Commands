@@ -9,7 +9,7 @@
 #define I2C_SLAVE_ADDR 20
 #define REBOOT_PIN 7              // pin used to reset master
 
-#define VERSION 2008
+#define VERSION 2010
 
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
@@ -27,16 +27,18 @@
 #define COMMAND_EEPROM_READ     152  // sequential read mode
 #define COMMAND_EEPROM_NORMAL   153  // exit EEPROM mode, back to default behavior
 
-
-#define COMMAND_VERSION 160
+#define COMMAND_VERSION         160
 #define COMMAND_COMPILEDATETIME 161
-#define COMMAND_TEMPERATURE 162
+#define COMMAND_TEMPERATURE     162
+#define COMMAND_FREEMEMORY      163
 
 //serial commands
 #define COMMAND_SERIAL_SET_BAUD_RATE 170
 #define COMMAND_RETRIEVE_SERIAL_BUFFER 171
 #define COMMAND_POPULATE_SERIAL_BUFFER 172
 #define COMMAND_SEND_SERIAL_BUFFER 173
+
+
 
 #define EEPROM_SIZE 1024
 
@@ -48,7 +50,7 @@ struct CircularBuffer {
   uint16_t count;
 };
 
-#define RX_SIZE 60
+#define RX_SIZE 200
 #define TX_SIZE 60
 
 uint8_t rxStorage[RX_SIZE];
@@ -231,9 +233,10 @@ void receiveEvent(int howMany) {
     if (command == COMMAND_POPULATE_SERIAL_BUFFER) {
       //Serial.println("populating serial buffer");
       cbPutArray(txBuffer, buffer, bytesRead);
-      
     } else if (command == COMMAND_RETRIEVE_SERIAL_BUFFER) {
       retrieveSerialData = true;
+    } else if (command == COMMAND_FREEMEMORY) {
+      dataToSend = (unsigned long)freeMemory();
     // ---- EEPROM Commands ----
     } else if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
         switch (command) {
@@ -532,4 +535,10 @@ int cbGetLatest(const CircularBuffer &cb) {
   
   uint16_t pos = (cb.head == 0) ? (cb.size - 1) : (cb.head - 1);
   return cb.data[pos];
+}
+
+int freeMemory() {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
 }
