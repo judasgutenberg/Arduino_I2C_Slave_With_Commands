@@ -9,7 +9,7 @@
 #define I2C_SLAVE_ADDR 20
 #define REBOOT_PIN 7              // pin used to reset master
 
-#define VERSION 2010
+#define VERSION 2012
 
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
@@ -45,12 +45,12 @@
 struct CircularBuffer {
   uint8_t* data;
   uint16_t size;
-  uint16_t head;
-  uint16_t tail;
-  uint16_t count;
+  volatile uint16_t head; // modified in ISR / main
+  volatile uint16_t tail;
+  volatile uint16_t count;
 };
 
-#define RX_SIZE 200
+#define RX_SIZE 400
 #define TX_SIZE 60
 
 uint8_t rxStorage[RX_SIZE];
@@ -78,7 +78,7 @@ volatile uint8_t eepromWriteLength = 0;
 volatile bool eepromWritePending = false;
 volatile bool retrieveSerialData = false;
 uint32_t baudRate = 0;
-bool alsoNeedAnEndByte = false;
+ 
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -90,23 +90,27 @@ void requestEvent();
 void handleCommand(byte command, long value);
 void writeWireLong(long val);
 
-// ---- Early init hook ----
-extern "C" void initVariant(void) {
-    Wire.begin(I2C_SLAVE_ADDR);
-    Wire.onReceive(receiveEvent);
-    Wire.onRequest(requestEvent);
-}
+
 
 // ---- Setup ----
 void setup() {
     //Serial.begin(115200);
+    //while (Serial.available()) Serial.read(); 
     //Serial.println("Started");
-    pinMode(REBOOT_PIN, OUTPUT);
-    digitalWrite(REBOOT_PIN, HIGH); // idle high
+
+    memset(rxStorage, 0, RX_SIZE);
+    rxBuffer.head = rxBuffer.tail = rxBuffer.count = 0;
+    
+    memset(txStorage, 0, TX_SIZE);
+    txBuffer.head = txBuffer.tail = txBuffer.count = 0;
 
     Wire.begin(I2C_SLAVE_ADDR);
     Wire.onReceive(receiveEvent);
     Wire.onRequest(requestEvent);
+
+    
+    pinMode(REBOOT_PIN, OUTPUT);
+    digitalWrite(REBOOT_PIN, HIGH); // idle high
 
     lastWatchdogPet = millis(); // start watchdog timer
 }
@@ -150,20 +154,15 @@ void loop() {
       cbSendLatest(txBuffer);
       
       if (Serial.available()) {
-        noInterrupts();
+        //noInterrupts();
         uint8_t b = Serial.read();
         cbPutByte(rxBuffer, b, 1);
-        alsoNeedAnEndByte = true;
-        delay(1);
+        //delay(1);
         yield();
-        interrupts();
+        //interrupts();
       }
       
-      if (alsoNeedAnEndByte && !Serial.available()) {
-        yield();
-        cbPutByte(rxBuffer, 0, 1); // terminator
-        alsoNeedAnEndByte = false;
-      }
+
     }
 
     unsigned long secondsLate = (now - lastWatchdogPet)/1000;
@@ -471,10 +470,18 @@ void setSerialRate(byte baudRateLevel) {
     1000000,
     2000000
   };
-  baudRate = baudRates[baudRateLevel];
-  if(baudRate > 0) {
-    Serial.begin(baudRate);
-      //Serial.println("beginnning!");
+  uint32_t newBaud = baudRates[baudRateLevel];
+  baudRate = newBaud;
+
+  if (newBaud > 0) {
+    Serial.end();
+    delay(2);
+    Serial.begin(newBaud);
+    delay(2);
+
+    while (Serial.available()) {
+      Serial.read();   // THIS is the missing piece
+    }
   }
 }
 
