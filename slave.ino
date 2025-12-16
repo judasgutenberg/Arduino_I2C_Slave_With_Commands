@@ -9,7 +9,7 @@
 #define I2C_SLAVE_ADDR 20
 #define REBOOT_PIN 7              // pin used to reset master
 
-#define VERSION 2012
+#define VERSION 2016
 
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
@@ -31,16 +31,20 @@
 #define COMMAND_COMPILEDATETIME 161
 #define COMMAND_TEMPERATURE     162
 #define COMMAND_FREEMEMORY      163
+#define COMMAND_GET_SLAVE_CONFIG 164
+
 
 //serial commands
 #define COMMAND_SERIAL_SET_BAUD_RATE 170
 #define COMMAND_RETRIEVE_SERIAL_BUFFER 171
 #define COMMAND_POPULATE_SERIAL_BUFFER 172
-#define COMMAND_SEND_SERIAL_BUFFER 173
 
 
+#define COMMAND_SET_UNIX_TIME 180
+#define COMMAND_GET_UNIX_TIME 181
 
 #define EEPROM_SIZE 1024
+#define SLAVE_CONFIG 512  //where local slave configs live
 
 struct CircularBuffer {
   uint8_t* data;
@@ -78,7 +82,9 @@ volatile uint8_t eepromWriteLength = 0;
 volatile bool eepromWritePending = false;
 volatile bool retrieveSerialData = false;
 uint32_t baudRate = 0;
- 
+
+volatile uint32_t unixTime = 0;
+
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -87,7 +93,7 @@ unsigned int eepromAddress = 0;  // pointer within 0..1023
 // forward declarations
 void receiveEvent(int howMany);
 void requestEvent();
-void handleCommand(byte command, long value);
+void handleCommand(byte command, uint32_t value);
 void writeWireLong(long val);
 
 
@@ -111,7 +117,7 @@ void setup() {
     
     pinMode(REBOOT_PIN, OUTPUT);
     digitalWrite(REBOOT_PIN, HIGH); // idle high
-
+    setupTimer1();
     lastWatchdogPet = millis(); // start watchdog timer
 }
 
@@ -179,6 +185,25 @@ void loop() {
     }
 }
 
+ISR(TIMER1_COMPA_vect) {
+  //most accurate way to do this:
+  unixTime++;
+}
+
+void setupTimer1() {
+    cli();
+
+    TCCR1A = 0;
+    TCCR1B = 0;
+
+    OCR1A = 15624;               // 1 second
+    TCCR1B |= (1 << WGM12);      // CTC mode
+    TCCR1B |= (1 << CS12) | (1 << CS10); // prescaler 1024
+    TIMSK1 |= (1 << OCIE1A);     // enable compare interrupt
+
+    sei();
+}
+
 void rebootMaster() {
     rebootCount++;
     digitalWrite(REBOOT_PIN, LOW);
@@ -213,7 +238,7 @@ void receiveEvent(int howMany) {
     }
 
     byte command = Wire.read();
-    long value = 0;
+    uint32_t value = 0;
     //Serial.println(command);
     int bytesRead = 0;
     byte buffer[32];
@@ -236,6 +261,12 @@ void receiveEvent(int howMany) {
       retrieveSerialData = true;
     } else if (command == COMMAND_FREEMEMORY) {
       dataToSend = (unsigned long)freeMemory();
+    } else if (command == COMMAND_SET_UNIX_TIME) {
+      unixTime = value;
+    } else if (command == COMMAND_GET_UNIX_TIME) {
+      dataToSend = unixTime;
+    } else if (command == COMMAND_GET_SLAVE_CONFIG) {
+      dataToSend = SLAVE_CONFIG;
     // ---- EEPROM Commands ----
     } else if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
         switch (command) {
@@ -299,7 +330,7 @@ void receiveEvent(int howMany) {
 }
 
 // ---- Command Handler ----
-void handleCommand(byte command, long value) {
+void handleCommand(byte command, uint32_t value) {
     switch (command) {
         case COMMAND_REBOOT:
             deferredCommand = command;
@@ -358,6 +389,10 @@ void handleCommand(byte command, long value) {
                         watchdogTimeout *= 10;
                     }
                     lastTimeoutScale = watchdogTimingIndication;
+                    Serial.println(value);
+                    if(value > 0) {
+                      unixTime = value;
+                    }
                 }
                 lastWatchdogPet = millis();
             }
