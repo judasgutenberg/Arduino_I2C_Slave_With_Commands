@@ -34,7 +34,11 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 172: populate serial buffer for transmission
 
-20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  There are several pet-the-watchdog commands:
+180: set UNIX time
+
+181: get UNIX time
+
+20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  This mechanism also allows the master to send the Unix timestamp so the the slave can keep track of Unix time independently. There are several pet-the-watchdog commands:
 
 200: pets the watchdog, telling it that it must be petted once per second or it can bite (reset!) -- that's way too fast, don't do that.
 
