@@ -28,11 +28,25 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 153: exit EEPROM mode, back to default behavior
 
+160: get firmware version
+
+161: get unix time of last firmware compile
+
+162: get onboard temperature (or whatever that glitchy value is)
+
+163: get free memory
+
+164:  get slave configuration
+
 170: set serial baud rate and start serial port
 
 171: retrieve data from serial buffer
 
 172: populate serial buffer for transmission
+
+173: get unix time of last successful serial data parse
+
+174: get last parsed data arriving via serial
 
 180: set UNIX time
 
