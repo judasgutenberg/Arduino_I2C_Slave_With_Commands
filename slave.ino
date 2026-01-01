@@ -5,11 +5,19 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-// ---- CONFIG ----
-#define I2C_SLAVE_ADDR 20
-#define REBOOT_PIN 7              // pin used to reset master
 
-#define VERSION 2016
+
+#define VERSION 2019
+
+
+#define RX_SIZE 100
+#define TX_SIZE 60
+
+
+//indexes into configuration array
+#define BAUD_RATE_LEVEL 6
+#define I2C_ADDRESS 7
+#define REBOOT_PIN 8
 
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
@@ -35,16 +43,42 @@
 
 
 //serial commands
-#define COMMAND_SERIAL_SET_BAUD_RATE 170
-#define COMMAND_RETRIEVE_SERIAL_BUFFER 171
-#define COMMAND_POPULATE_SERIAL_BUFFER 172
-
+#define COMMAND_SERIAL_SET_BAUD_RATE        170
+#define COMMAND_RETRIEVE_SERIAL_BUFFER      171
+#define COMMAND_POPULATE_SERIAL_BUFFER      172
+#define COMMAND_GET_LAST_PARSE_TIME         173
+#define COMMAND_GET_PARSED_SERIAL_DATA      174
+#define CMD_SET_PARSED_OFFSET               175
 
 #define COMMAND_SET_UNIX_TIME 180
 #define COMMAND_GET_UNIX_TIME 181
+ 
 
 #define EEPROM_SIZE 1024
 #define SLAVE_CONFIG 512  //where local slave configs live
+
+#define MAX_BLOCKS 2
+#define MAX_ADDRS  4
+#define MAX_OFFSETS 8
+
+#define MAX_CFG_LEN 70
+#define PARSED_BUF_MAX 30   // bytes (15 values)
+
+uint8_t parsedBuf[PARSED_BUF_MAX]; //a packed register for returning parsed serial values
+uint8_t parsedLen = 0;
+
+struct ConfigBlock {
+  char start[32];
+  char end[32];
+  uint8_t addrCount;
+  char addr[MAX_ADDRS][12];
+  uint8_t offsets[MAX_ADDRS][MAX_OFFSETS];
+  uint8_t offsetCount[MAX_ADDRS];
+};
+
+ConfigBlock blocks[MAX_BLOCKS];
+uint8_t blockCount = 0;
+int8_t activeBlock = -1;
 
 struct CircularBuffer {
   uint8_t* data;
@@ -54,11 +88,25 @@ struct CircularBuffer {
   volatile uint16_t count;
 };
 
-#define RX_SIZE 400
-#define TX_SIZE 60
+
+
+
+
+// ---- CONFIG ----
+
+ 
+
+
+//for config items stored locally in the EEPROM
+uint16_t cis[10];
+
+
+
+ 
 
 uint8_t rxStorage[RX_SIZE];
 uint8_t txStorage[TX_SIZE];
+            // pin used to reset master
 
 CircularBuffer rxBuffer = { rxStorage, RX_SIZE, 0, 0, 0 };
 CircularBuffer txBuffer = { txStorage, TX_SIZE, 0, 0, 0 };
@@ -73,7 +121,7 @@ volatile unsigned long lastPetAtBite = 0;
 
 volatile unsigned long watchdogTimeout = 200;
 volatile unsigned int rebootCount = 0;
-volatile unsigned long timeLastPrinted = 0;
+ 
 volatile byte deferredCommand = 0;
 volatile byte eepromReadCount = 1; 
 
@@ -81,10 +129,15 @@ volatile uint8_t eepromWriteBuffer[32];
 volatile uint8_t eepromWriteLength = 0;
 volatile bool eepromWritePending = false;
 volatile bool retrieveSerialData = false;
-uint32_t baudRate = 0;
+volatile bool retrieveParsedSerialData = false;
+ 
 
 volatile uint32_t unixTime = 0;
+volatile uint32_t lastDataParseTime = 0;
 
+ 
+volatile uint8_t parsedReadOffset = 0;
+ 
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -100,9 +153,11 @@ void writeWireLong(long val);
 
 // ---- Setup ----
 void setup() {
-    //Serial.begin(115200);
+    initDefaultConfig();
+    initSlaveConfigFromEeprom();//might not do anything good
+ 
     //while (Serial.available()) Serial.read(); 
-    //Serial.println("Started");
+    Serial.println("Started");
 
     memset(rxStorage, 0, RX_SIZE);
     rxBuffer.head = rxBuffer.tail = rxBuffer.count = 0;
@@ -110,13 +165,13 @@ void setup() {
     memset(txStorage, 0, TX_SIZE);
     txBuffer.head = txBuffer.tail = txBuffer.count = 0;
 
-    Wire.begin(I2C_SLAVE_ADDR);
+    Wire.begin((byte)cis[I2C_ADDRESS]);
     Wire.onReceive(receiveEvent);
     Wire.onRequest(requestEvent);
 
     
-    pinMode(REBOOT_PIN, OUTPUT);
-    digitalWrite(REBOOT_PIN, HIGH); // idle high
+    pinMode(cis[REBOOT_PIN], OUTPUT);
+    digitalWrite(cis[REBOOT_PIN], HIGH); // idle high
     setupTimer1();
     lastWatchdogPet = millis(); // start watchdog timer
 }
@@ -124,20 +179,7 @@ void setup() {
 void loop() {
     unsigned long now = millis();
 
-    if(millis()-timeLastPrinted > 2000) {
-        // debug prints (optional)
-        /*
-        Serial.print(now);
-        Serial.print(" ");
-        Serial.print(lastWatchdogPet);
-        Serial.print(" ");
-        Serial.print((now-lastWatchdogPet)/1000);
-        Serial.print(" ");
-        Serial.println(watchdogTimeout);
-        Serial.print("\n");
-        */
-        timeLastPrinted = millis();
-    }
+    processSerialStream();
 
 
     if (eepromWritePending) {
@@ -155,7 +197,7 @@ void loop() {
       //Serial.println("*");
     }
 
-    if(baudRate > 0) {
+    if(cis[BAUD_RATE_LEVEL] > 0) {
      // Serial.println("yer");
       cbSendLatest(txBuffer);
       
@@ -187,7 +229,9 @@ void loop() {
 
 ISR(TIMER1_COMPA_vect) {
   //most accurate way to do this:
-  unixTime++;
+  if(unixTime > 0) { //don't increment unixTime if it was not set
+    unixTime++;
+  }
 }
 
 void setupTimer1() {
@@ -206,9 +250,9 @@ void setupTimer1() {
 
 void rebootMaster() {
     rebootCount++;
-    digitalWrite(REBOOT_PIN, LOW);
+    digitalWrite(cis[REBOOT_PIN], LOW);
     delay(100);
-    digitalWrite(REBOOT_PIN, HIGH);
+    digitalWrite(cis[REBOOT_PIN], HIGH);
 }
 
 // ---- I2C Callbacks ----
@@ -227,6 +271,18 @@ void requestEvent() {
     //Serial.println("SENDY!");
     cbSendLatestWire(rxBuffer, 32);
     retrieveSerialData = false;
+  } else if (retrieveParsedSerialData) {
+    uint8_t remaining = parsedLen - parsedReadOffset;
+    uint8_t chunk = remaining > 30 ? 30 : remaining;
+  
+    for (uint8_t i = 0; i < chunk; i++) {
+      Wire.write(parsedBuf[parsedReadOffset + i]);
+    }
+    parsedReadOffset += chunk;
+  
+    if (parsedReadOffset >= parsedLen) {
+      retrieveParsedSerialData = false;  // done
+    }
   } else {
     writeWireLong(dataToSend);
   }
@@ -265,8 +321,15 @@ void receiveEvent(int howMany) {
       unixTime = value;
     } else if (command == COMMAND_GET_UNIX_TIME) {
       dataToSend = unixTime;
+    } else if (command == COMMAND_GET_LAST_PARSE_TIME) {
+      dataToSend = lastDataParseTime;
     } else if (command == COMMAND_GET_SLAVE_CONFIG) {
       dataToSend = SLAVE_CONFIG;
+    } else if (command == CMD_SET_PARSED_OFFSET) {
+      parsedReadOffset = value;
+    } else if (command == COMMAND_GET_PARSED_SERIAL_DATA) {
+      retrieveParsedSerialData = true;
+ 
     // ---- EEPROM Commands ----
     } else if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
         switch (command) {
@@ -389,7 +452,7 @@ void handleCommand(byte command, uint32_t value) {
                         watchdogTimeout *= 10;
                     }
                     lastTimeoutScale = watchdogTimingIndication;
-                    Serial.println(value);
+                    //Serial.println(value);
                     if(value > 0) {
                       unixTime = value;
                     }
@@ -477,17 +540,7 @@ long readInternalTemp() {
 //serial functions
 ////////////////////////////////////////
 
-void setSerialRate(byte baudRateLevel) {
-  /*
-  while(Serial.available()) {
-    Serial.read();
-  }
-  delay(2);
-  Serial.flush();
-  Serial.end();
-  */
-  //Serial.begin(115200);
-
+uint32_t setSerialRate(byte baudRateLevel) {
   uint32_t baudRates[] = {
     0,
     300,
@@ -506,8 +559,7 @@ void setSerialRate(byte baudRateLevel) {
     2000000
   };
   uint32_t newBaud = baudRates[baudRateLevel];
-  baudRate = newBaud;
-
+ 
   if (newBaud > 0) {
     Serial.end();
     delay(2);
@@ -515,10 +567,12 @@ void setSerialRate(byte baudRateLevel) {
     delay(2);
 
     while (Serial.available()) {
-      Serial.read();   // THIS is the missing piece
+      Serial.read();    
     }
   }
+  return newBaud;
 }
+
 
 
 void cbSendLatest(CircularBuffer &cb) {
@@ -583,4 +637,180 @@ int freeMemory() {
   extern int __heap_start, *__brkval;
   int v;
   return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
+}
+
+//////////////////////////////////////////////
+//UTILITY:
+inline void appendU16(uint16_t v) {
+  if (parsedLen + 2 > PARSED_BUF_MAX) return;  // hard stop
+  parsedBuf[parsedLen++] = (uint8_t)(v & 0xFF);
+  parsedBuf[parsedLen++] = (uint8_t)(v >> 8);
+}
+
+//////////////////////////////////////////////
+//reading local EEPROM:
+bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr) {
+  uint8_t i = 0;
+
+  while (i < maxLen - 1) {
+    byte b = EEPROM.read(addr++);
+    if (b == 0) {
+      out[i] = 0;
+      nextAddr = addr;
+      return true;
+    }
+    out[i++] = (char)b;
+  }
+
+  out[i] = 0;
+  nextAddr = addr;
+  return false; // truncated, but usable
+}
+
+
+//load default config in case we don't have anything in EEPROM
+void initDefaultConfig() {
+  cis[BAUD_RATE_LEVEL] = 9;
+  cis[I2C_ADDRESS] = 20;
+  cis[REBOOT_PIN] = 7;
+}
+
+
+//////////////////////////////////////////////
+//parsing serial:
+
+void initSlaveConfigFromEeprom() {
+  char magic[5];
+
+  // Read magic header
+  for (uint8_t i = 0; i < 4; i++) {
+    magic[i] = EEPROM.read(SLAVE_CONFIG + i);
+  }
+  magic[4] = 0;
+
+  if (strcmp(magic, "DATA") != 0) {
+    blockCount = 0;   // no parsing enabled
+    return;
+  }
+  if(cis[BAUD_RATE_LEVEL] > 0) {
+    setSerialRate(cis[BAUD_RATE_LEVEL]);
+    
+  }
+  char cfg0[MAX_CFG_LEN];
+  char cfg1[MAX_CFG_LEN];
+  int addr = SLAVE_CONFIG + 4;
+  if (!eepromReadCString(addr, cfg0, sizeof(cfg0), addr)) {
+    blockCount = 0;
+    return;
+  }
+  if (!eepromReadCString(addr, cfg1, sizeof(cfg1), addr)) {
+    blockCount = 0;
+    return;
+  }
+
+  // Parse configs
+  parseConfigString(cfg0, blocks[0]);
+  parseConfigString(cfg1, blocks[1]);
+
+  blockCount = 2;
+}
+
+void parseConfigString(const char *cfg, ConfigBlock &out) {
+  char buf[128];
+  strncpy(buf, cfg, sizeof(buf));
+  buf[sizeof(buf) - 1] = 0;
+
+  char *tok = strtok(buf, "|");
+  if (!tok) return;
+  strncpy(out.start, tok, sizeof(out.start));
+
+  tok = strtok(NULL, "|");
+  if (!tok) return;
+  strncpy(out.end, tok, sizeof(out.end));
+
+  out.addrCount = 0;
+  uint8_t curAddr = 255;
+
+  while ((tok = strtok(NULL, "|"))) {
+    if (strncmp(tok, "0x", 2) == 0 || tok[0] == 'I') {
+      curAddr = out.addrCount++;
+      strncpy(out.addr[curAddr], tok, sizeof(out.addr[curAddr]));
+      out.offsetCount[curAddr] = 0;
+    } else if (curAddr != 255) {
+      out.offsets[curAddr][out.offsetCount[curAddr]++] = atoi(tok);
+    }
+  }
+}
+
+
+bool readSerialLine(char *line, uint8_t maxLen) {
+  static uint8_t idx = 0;
+
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') {
+      line[idx] = 0;
+      idx = 0;
+      return true;
+    }
+    if (idx < maxLen - 1) {
+      line[idx++] = c;
+    }
+  }
+  return false;
+}
+
+uint8_t extractHexBytes(const char *line, uint8_t *bytes, uint8_t maxBytes) {
+  uint8_t count = 0;
+  while (*line && count < maxBytes) {
+    if (isxdigit(line[0]) && isxdigit(line[1]) && line[2] == ' ') {
+      char tmp[3] = { line[0], line[1], 0 };
+      bytes[count++] = strtoul(tmp, NULL, 16);
+      line += 3;
+    } else {
+      line++;
+    }
+  }
+  return count;
+}
+
+void processSerialStream() {
+  static char line[128];
+  static uint8_t bytes[32];
+
+  if (!readSerialLine(line, sizeof(line))) return;
+
+  // Detect block start
+  for (uint8_t i = 0; i < blockCount; i++) {
+    if (strstr(line, blocks[i].start)) {
+      activeBlock = i;
+      parsedLen = 0;        // reset output buffer
+      return;
+    }
+  }
+
+  if (activeBlock < 0) return;
+
+  // Detect block end
+  if (strstr(line, blocks[activeBlock].end)) {
+    activeBlock = -1;
+    return;
+  }
+
+  // Process addresses in config order
+  for (uint8_t a = 0; a < blocks[activeBlock].addrCount; a++) {
+    if (!strstr(line, blocks[activeBlock].addr[a])) continue;
+
+    uint8_t byteCount = extractHexBytes(line, bytes, sizeof(bytes));
+
+    for (uint8_t o = 0; o < blocks[activeBlock].offsetCount[a]; o++) {
+      uint8_t off = blocks[activeBlock].offsets[a][o];
+      if (off < byteCount) {
+        uint16_t v = bytes[off];   // zero-extend u8 → u16
+        //Serial.println(v);
+        appendU16(v);
+      }
+    }
+  }
+  lastDataParseTime = unixTime;  //save this info so we know how stale our data is
 }
