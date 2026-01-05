@@ -9,6 +9,7 @@
 
 #define VERSION 2019
 
+#define INT_CONFIGS 10
 
 #define RX_SIZE 100
 #define TX_SIZE 60
@@ -16,8 +17,9 @@
 
 //indexes into configuration array
 #define BAUD_RATE_LEVEL 6
-#define I2C_ADDRESS 7
-#define REBOOT_PIN 8
+#define I2C_ADDRESS     7
+#define REBOOT_PIN      8
+#define SERIAL_MODE     9
 
 // Existing watchdog commands
 #define COMMAND_REBOOT 128
@@ -50,6 +52,9 @@
 #define COMMAND_GET_PARSED_SERIAL_DATA      174
 #define COMMAND_SET_PARSED_OFFSET           175
 #define COMMAND_GET_PARSED_DATUM            176
+#define COMMAND_GET_PARSE_CONFIG_NUMBER     177
+#define COMMAND_GET_PARSED_PACKET_SIZE      178
+#define COMMAND_SET_SERIAL_MODE             179
 
 #define COMMAND_SET_UNIX_TIME               180
 #define COMMAND_GET_UNIX_TIME               181
@@ -59,15 +64,16 @@
 #define EEPROM_SIZE 1024
 #define SLAVE_CONFIG 512  //where local slave configs live
 
-#define MAX_BLOCKS 2
-#define MAX_ADDRS  4
+#define MAX_BLOCKS 3
+#define MAX_ADDRS  3
 #define MAX_OFFSETS 8
 
 #define MAX_CFG_LEN 120
 #define PARSED_BUF_MAX 30   // bytes (15 values)
 
 uint8_t parsedBuf[PARSED_BUF_MAX];// = {0xff, 0xff, 0x04, 0x00, 0x0a, 0x00, 0x01, 0x10}; //a packed register for returning parsed serial values
-uint8_t parsedLen = 0;
+uint8_t parsedStringPacketLen = 0;
+uint8_t parsedStringConfigCount = 0; //determined by actually looking at the EEPROM
 
 struct ConfigBlock {
   char start[32];
@@ -112,7 +118,7 @@ struct CircularBuffer {
 
 
 //for config items stored locally in the EEPROM
-uint16_t cis[10];
+uint16_t cis[INT_CONFIGS];
 
 
 
@@ -156,7 +162,7 @@ volatile uint8_t parsedReadOffset = 0;
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
 unsigned int eepromAddress = 0;  // pointer within 0..1023
-boolean actingAsSerialParser = false;
+ 
 
 // forward declarations
 void receiveEvent(int howMany);
@@ -195,7 +201,9 @@ void setup() {
 void loop() {
     unsigned long now = millis();
     //Serial.println(now);
-    processSerialStream();
+    if(cis[BAUD_RATE_LEVEL] > 0 && cis[SERIAL_MODE] == 2) {
+      processSerialStream();
+    }
 
 
     if (eepromWritePending) {
@@ -213,7 +221,7 @@ void loop() {
       //Serial.println("*");
     }
 
-    if(cis[BAUD_RATE_LEVEL] > 0 && !actingAsSerialParser) {
+    if(cis[BAUD_RATE_LEVEL] > 0 && cis[SERIAL_MODE] == 1) {
      // Serial.println("yer");
       cbSendLatest(txBuffer);
       
@@ -288,18 +296,18 @@ void requestEvent() {
     cbSendLatestWire(rxBuffer, 32);
     retrieveSerialData = false;
   } else if (retrieveParsedSerialData) {
-    //Serial.println("parsedlen: ");
-    //Serial.println(parsedLen);
-    parsedLen = 60;
-    if(parsedLen > 0){      
-      uint8_t remaining = parsedLen - parsedReadOffset;
+    //Serial.println("parsedStringPacketLen: ");
+    //Serial.println(parsedStringPacketLen);
+    //parsedStringPacketLen = 60;
+    if(parsedStringPacketLen > 0){      
+      uint8_t remaining = parsedStringPacketLen - parsedReadOffset;
       uint8_t chunk = remaining > 30 ? 30 : remaining;
       
       for (uint8_t i = 0; i < chunk; i++) {
         Wire.write(parsedBuf[parsedReadOffset + i]);
         /*
         Serial.print("in that loop: ");
-        Serial.print(parsedLen);
+        Serial.print(parsedStringPacketLen);
         Serial.print("; ");
         Serial.print(parsedReadOffset);
         Serial.print("; ");
@@ -312,7 +320,7 @@ void requestEvent() {
    
       parsedReadOffset += chunk;
     
-      if (parsedReadOffset >= parsedLen) {
+      if (parsedReadOffset >= parsedStringPacketLen) {
         retrieveParsedSerialData = false;  // done
       }
 
@@ -364,6 +372,12 @@ void receiveEvent(int howMany) {
       unixTime = value;
     } else if (command == COMMAND_GET_UNIX_TIME) {
       dataToSend = unixTime;
+    } else if (command == COMMAND_GET_PARSE_CONFIG_NUMBER) {
+      dataToSend = parsedStringConfigCount;
+    } else if (command == COMMAND_GET_PARSED_PACKET_SIZE) {
+      dataToSend = parsedStringPacketLen;
+    } else if (command == COMMAND_SET_SERIAL_MODE) {
+      cis[SERIAL_MODE] = value;
     } else if (command == COMMAND_GET_CONFIG) {
       dataToSend = cis[value]; //so far we can only retrieve individual integer config items
       //Serial.println(dataToSend);
@@ -537,6 +551,25 @@ void software_reset(void) {
 }
 
 // ---- Utility ----
+
+bool isInteger(const char *s) {
+  if (s == NULL || *s == '\0') return false;
+
+  unsigned int i = 0;
+
+  // Optional sign
+  if (s[0] == '-' || s[0] == '+') {
+    if (s[1] == '\0') return false; // only "+" or "-"
+    i = 1;
+  }
+
+  for (; s[i] != '\0'; i++) {
+    if (!isDigit(s[i])) return false;
+  }
+
+  return true;
+}
+
 void writeWireLong(long val) {
     byte buffer[4];
     buffer[0] = val & 0xFF;
@@ -706,7 +739,7 @@ int freeMemory() {
 
 //////////////////////////////////////////////
 //reading local EEPROM:
-bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr) {
+bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr, uint8_t blockOrdinal) {
   uint8_t i = 0;
   //Serial.println("^^^^^^^^^^^^^^^^^^^^");
   //Serial.println(addr);
@@ -721,6 +754,16 @@ bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr) {
     //Serial.print((int) b);
     //Serial.print(" ");
     //Serial.println((char) b);
+    if(blockOrdinal > 1) {
+      //Serial.print((int)b);
+      //Serial.print('#');
+    }
+    if (b > 128 || (b == 0 && i == 0)) { //if we hit an ASCII character out of range, we are in EEPROM that does not contain parser config strings
+      parsedStringConfigCount = blockOrdinal;
+
+      //Serial.print("number of blocks found: ");
+      //Serial.println(parsedStringConfigCount);
+    }
     if (b == 0) {
       //Serial.print("Fail out:");
       //Serial.println(i);
@@ -733,29 +776,26 @@ bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr) {
 
   out[i] = 0;
   nextAddr = addr;
-  return true; // truncated, but usable
+  return false; // truncated, but usable
 }
 
 
 //load default config in case we don't have anything in EEPROM
 void initDefaultConfig() {
   cis[BAUD_RATE_LEVEL] = 9;
-  cis[I2C_ADDRESS] = 20;
-  cis[REBOOT_PIN] = 7;
+  cis[I2C_ADDRESS] =    20;
+  cis[REBOOT_PIN] =      7;
+  cis[SERIAL_MODE] =     2;
 }
-
-
-//////////////////////////////////////////////
-//parsing serial:
-
- 
 
 void initSlaveConfigFromEeprom() {
   char magic[5];
+
   if(cis[BAUD_RATE_LEVEL] > 0) {
     setSerialRate(cis[BAUD_RATE_LEVEL]);
     
   }
+
   // Read magic header
   for (uint8_t i = 0; i < 4; i++) {
     magic[i] = EEPROM.read(SLAVE_CONFIG + i);
@@ -767,34 +807,37 @@ void initSlaveConfigFromEeprom() {
     blockCount = 0;   // no parsing enabled
     //Serial.println("no data");
     return;
+  } else {
+    
+    for (int i = 0; i < INT_CONFIGS; i++) {
+        uint16_t address = SLAVE_CONFIG + 4 + i * 2;
+        uint16_t value = (uint16_t)EEPROM.read(address + 1) | ((uint16_t)EEPROM.read(address) << 8);
+        /*
+        Serial.print(i);
+        Serial.print(": ");
+        Serial.println(value);
+        */
+        //cis[i] = value;
+    }
+
   }
 
-  char cfg0[MAX_CFG_LEN];
-  char cfg1[MAX_CFG_LEN];
+  char cfg[MAX_BLOCKS][MAX_CFG_LEN];
+   
   int addr = SLAVE_CONFIG + 4;
   addr += 21; //gotta bypass the integers at the bottom, assuming we know how many there are.  there should be five
-  if (!eepromReadCString(addr, cfg0, sizeof(cfg0), addr)) {
-   
-    //Serial.println(cfg0);
-    blockCount = 0;
-    return;
+  for(uint8_t i=0; i< MAX_BLOCKS; i++) {
+    eepromReadCString(addr, cfg[i], sizeof(cfg[i]), addr, i);
+    parseConfigString(cfg[i], blocks[i]);
+    //dumpConfigBlock(blocks[i]);
+    blockCount++;
   }
-  //addr = addr + 4; //for some reason the strings are four bytes apart. hmmm, not any more
-  //Serial.println(addr);
-  if (!eepromReadCString(addr, cfg1, sizeof(cfg1), addr)) {
-    blockCount = 0;
-    return;
-  }
-  //Serial.println("CFG 1:");
-  //Serial.println(cfg1);
-  // Parse configs
- 
-  parseConfigString(cfg0, blocks[0]);
-  parseConfigString(cfg1, blocks[1]);
-
-  blockCount = MAX_BLOCKS;
 }
 
+//////////////////////////////////////////////
+//parsing serial:
+
+//only for debugging:
 void dumpConfigBlock(const ConfigBlock &b) {
   Serial.println(F("=== ConfigBlock ==="));
 
@@ -853,8 +896,7 @@ void parseConfigString(const char *cfg, ConfigBlock &out) {
 
   while ((tok = strtok(NULL, "|"))) {
     //Serial.println(tok);
-    actingAsSerialParser = true;
-    if (strncmp(tok, "0x", 2) == 0 || tok[0] == 'I') {
+    if (!isInteger(tok)) { //any token in the config that is not explicitly a decimal integer is a string to be searched for
       curAddr = out.addrCount++;
       
       //Serial.println(tok);
@@ -866,6 +908,10 @@ void parseConfigString(const char *cfg, ConfigBlock &out) {
       //Serial.println(tok );
       if (out.offsetCount[curAddr] < MAX_OFFSETS) {
         out.offsets[curAddr][out.offsetCount[curAddr]++] = atoi(tok);
+        //increment the global containing the parsed packet size. since each 16 bit value in the packet gets a pair of offsets, 
+        //if we increment with every offset we get the correct number of bytes in the packet
+        parsedStringPacketLen++; 
+        //Serial.println(parsedStringPacketLen);
       }
     }
   }
@@ -883,14 +929,17 @@ inline void appendU16(uint16_t v,
                       uint8_t off2,
                       uint8_t byteCount)
 {
-  if (parsedLen + 2 > PARSED_BUF_MAX) return;
+  //Serial.print(parsedStringPacketLen + 2);
+  //Serial.print(": ");
+  //Serial.print(PARSED_BUF_MAX);
+  if (parsedStringPacketLen + 2 > PARSED_BUF_MAX) return;
 
   uint8_t lo = (uint8_t)(v & 0xFF);
   uint8_t hi = (uint8_t)(v >> 8);
 
   parsedBuf[bytePacketStart] = lo;
   parsedBuf[bytePacketStart+1] = hi;
-
+  /*
   // ---- DEBUG TRACE ----
   Serial.print(F("[PARSE] blk="));
   Serial.print(blockIdx);
@@ -923,6 +972,7 @@ inline void appendU16(uint16_t v,
 
   Serial.print(F("  val="));
   Serial.println(v);
+  */
 }
 
 
@@ -989,24 +1039,29 @@ void processSerialStream() {
   //Serial.println(line);
   //Serial.println("++------------------------------");
   //Serial.println(sizeof(line));
+
+
+  //Serial.println(line);
   /* ---- BLOCK START DETECTION ---- */
   for (uint8_t i = 0; i < blockCount; i++) {
-    if (strstr(line, blocks[i].start)) {
+    if (strlen(blocks[i].start) > 0 && strstr(line, blocks[i].start)) {
+      //Serial.print(blocks[i].start);
       activeBlock = i;
-      parsedLen = 0;              // reset output buffer
+      //parsedStringPacketLen = 0;              // reset output buffer
       return;                     // wait for data lines
     }
   }
-
   if (activeBlock < 0) {
     return;
   }
 
   /* ---- BLOCK END DETECTION ---- */
-  if (strstr(line, blocks[activeBlock].end)) {
+  if (strlen(blocks[activeBlock].end) > 0 && strstr(line, blocks[activeBlock].end)) {
+    //Serial.println(blocks[activeBlock].end);
     activeBlock = -1;
     return;
   }
+  
 
   /* ---- ADDRESS LINES ---- */
   ConfigBlock &blk = blocks[activeBlock];
@@ -1049,12 +1104,11 @@ void processSerialStream() {
         if (off2 >= byteCount) {
           continue;
         }
-        v = (uint16_t)bytes[off1] |
-            ((uint16_t)bytes[off2] << 8);
+        v = (uint16_t)bytes[off1] | ((uint16_t)bytes[off2] << 8);
       }
 
 
-      uint16_t bytePacketStart = calculateOffsetIndex(blocks, MAX_BLOCKS, activeBlock, a);
+      uint16_t bytePacketStart = calculateOffsetIndex(blocks, parsedStringConfigCount, activeBlock, a);
      
 
       
