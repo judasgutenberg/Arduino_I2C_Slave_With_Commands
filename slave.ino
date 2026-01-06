@@ -5,9 +5,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-
-
-#define VERSION 2022
+#define VERSION 2023
 
 #define INT_CONFIGS 10
 
@@ -15,7 +13,8 @@
 #define TX_SIZE 60
 
 
-//indexes into configuration array
+//Indexes into integer configuration array
+#define PARSE_MODE      5
 #define BAUD_RATE_LEVEL 6
 #define I2C_ADDRESS     7
 #define REBOOT_PIN      8
@@ -32,7 +31,7 @@
 #define COMMAND_WATCHDOGPETBASE 200
 
 // New EEPROM-style commands
-#define COMMAND_EEPROM_SETADDR 150   // set pointer for read/write
+#define COMMAND_EEPROM_SETADDR  150   // set pointer for read/write
 #define COMMAND_EEPROM_WRITE    151  // sequential write mode
 #define COMMAND_EEPROM_READ     152  // sequential read mode
 #define COMMAND_EEPROM_NORMAL   153  // exit EEPROM mode, back to default behavior
@@ -109,20 +108,10 @@ struct CircularBuffer {
 };
 
 
-
-
-
 // ---- CONFIG ----
-
- 
-
 
 //for config items stored locally in the EEPROM
 uint16_t cis[INT_CONFIGS];
-
-
-
- 
 
 uint8_t rxStorage[RX_SIZE];
 uint8_t txStorage[TX_SIZE];
@@ -155,22 +144,17 @@ volatile bool retrieveParsedSerialData = false;
 volatile uint32_t unixTime = 0;
 volatile uint32_t lastDataParseTime = 0;
 
- 
 volatile uint8_t parsedReadOffset = 0;
- 
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
 unsigned int eepromAddress = 0;  // pointer within 0..1023
  
-
 // forward declarations
 void receiveEvent(int howMany);
 void requestEvent();
 void handleCommand(byte command, uint32_t value);
 void writeWireLong(long val);
-
-
 
 // ---- Setup ----
 void setup() {
@@ -204,8 +188,7 @@ void loop() {
     if(cis[BAUD_RATE_LEVEL] > 0 && cis[SERIAL_MODE] == 2) {
       processSerialStream();
     }
-
-
+    
     if (eepromWritePending) {
       eepromWritePending = false;
       noInterrupts();
@@ -233,8 +216,6 @@ void loop() {
         yield();
         //interrupts();
       }
-      
-
     }
 
     unsigned long secondsLate = (now - lastWatchdogPet)/1000;
@@ -783,10 +764,11 @@ bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr, uint8
 
 //load default config in case we don't have anything in EEPROM
 void initDefaultConfig() {
-  cis[BAUD_RATE_LEVEL] = 9;
-  cis[I2C_ADDRESS] =    20;
-  cis[REBOOT_PIN] =      7;
-  cis[SERIAL_MODE] =     2;
+  cis[PARSE_MODE]       = 0;
+  cis[BAUD_RATE_LEVEL]  = 9;
+  cis[I2C_ADDRESS]      = 20;
+  cis[REBOOT_PIN]       = 7;
+  cis[SERIAL_MODE]      = 2;
 }
 
 void initSlaveConfigFromEeprom() {
