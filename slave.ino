@@ -7,7 +7,7 @@
 
 
 
-#define VERSION 2019
+#define VERSION 2022
 
 #define INT_CONFIGS 10
 
@@ -379,6 +379,7 @@ void receiveEvent(int howMany) {
     } else if (command == COMMAND_SET_SERIAL_MODE) {
       cis[SERIAL_MODE] = value;
     } else if (command == COMMAND_GET_CONFIG) {
+      //Serial.println(cis[value]);
       dataToSend = cis[value]; //so far we can only retrieve individual integer config items
       //Serial.println(dataToSend);
     } else if (command == COMMAND_SET_CONFIG) {
@@ -817,7 +818,8 @@ void initSlaveConfigFromEeprom() {
         Serial.print(": ");
         Serial.println(value);
         */
-        //cis[i] = value;
+        //comment this out if your EEPROM is screwed up:
+        cis[i] = value;
     }
 
   }
