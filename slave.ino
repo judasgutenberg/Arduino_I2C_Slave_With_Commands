@@ -5,7 +5,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2027
+#define VERSION 2028
 
 #define INT_CONFIGS 10
 
@@ -14,7 +14,7 @@
 
 
 //Indexes into integer configuration array
-#define PARSE_MODE      5
+#define PARSING_STYLE   5
 #define BAUD_RATE_LEVEL 6
 #define I2C_ADDRESS     7
 #define REBOOT_PIN      8
@@ -41,7 +41,6 @@
 #define COMMAND_TEMPERATURE         162
 #define COMMAND_FREEMEMORY          163
 #define COMMAND_GET_SLAVE_CONFIG    164
-
 
 //serial commands
 #define COMMAND_SERIAL_SET_BAUD_RATE        170
@@ -70,6 +69,10 @@
 #define MAX_CFG_LEN 120
 #define PARSED_BUF_MAX 30   // bytes (15 values)
 
+#define PS_BIG_ENDIAN   0x04
+#define PS_CHAR_OFFSET  0x02
+#define PS_ASCII_VALUE  0x01
+
 uint8_t parsedBuf[PARSED_BUF_MAX];// = {0xff, 0xff, 0x04, 0x00, 0x0a, 0x00, 0x01, 0x10}; //a packed register for returning parsed serial values
 uint8_t parsedStringPacketLen = 0;
 uint8_t parsedStringConfigCount = 0; //determined by actually looking at the EEPROM
@@ -92,7 +95,8 @@ addr[0] = "0x3ffbb5fc"
 offsets[0] = {4,5,6,7,8,9,10,11}
 addr[1] = "0x3ffbb60c"
 offsets[1] = {0,1}
-offsetCount[1] = ??
+offsetCount[0] = 8
+offsetCount[1] = 2
  */
 
 ConfigBlock blocks[MAX_BLOCKS];
@@ -764,7 +768,7 @@ bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr, uint8
 
 //load default config in case we don't have anything in EEPROM
 void initDefaultConfig() {
-  cis[PARSE_MODE]       = 0;
+  cis[PARSING_STYLE]    = 0;
   cis[BAUD_RATE_LEVEL]  = 9;
   cis[I2C_ADDRESS]      = 20;
   cis[REBOOT_PIN]       = 7;
@@ -1012,108 +1016,175 @@ uint8_t extractHexBytes(const char *line,
   return count;
 }
 
-void processSerialStream() {
+void processSerialStream()
+{
   static char line[100];
-  static uint8_t bytes[32];
- 
+
   if (!readSerialLine(line, sizeof(line))) {
     return;
   }
-  //Serial.println("------------------------------");
-  //Serial.println(line);
-  //Serial.println("++------------------------------");
-  //Serial.println(sizeof(line));
 
-
-  //Serial.println(line);
   /* ---- BLOCK START DETECTION ---- */
   for (uint8_t i = 0; i < blockCount; i++) {
-    if (strlen(blocks[i].start) > 0 && strstr(line, blocks[i].start)) {
-      //Serial.print(blocks[i].start);
+    if (strlen(blocks[i].start) > 0 &&
+        strstr(line, blocks[i].start)) {
+
       activeBlock = i;
-      //parsedStringPacketLen = 0;              // reset output buffer
-      return;                     // wait for data lines
+      return;   // wait for data lines
     }
   }
+
   if (activeBlock < 0) {
     return;
   }
 
   /* ---- BLOCK END DETECTION ---- */
-  if (strlen(blocks[activeBlock].end) > 0 && strstr(line, blocks[activeBlock].end)) {
-    //Serial.println(blocks[activeBlock].end);
+  if (strlen(blocks[activeBlock].end) > 0 &&
+      strstr(line, blocks[activeBlock].end)) {
+
     activeBlock = -1;
     return;
   }
-  
 
   /* ---- ADDRESS LINES ---- */
   ConfigBlock &blk = blocks[activeBlock];
 
   for (uint8_t a = 0; a < blk.addrCount; a++) {
-    //Serial.println(blk.addr[a]);
-    //Serial.println(line);
-    if (!strstr(line, blk.addr[a])) {
-      //Serial.println("fail");
-      continue;
-    }
-    //Serial.println("success");
-    uint8_t byteCount = extractHexBytes(line, bytes, sizeof(bytes));
-    /*
-    if (strcmp(blk.addr[a], "0x3ffbb60c") == 0) {
-      Serial.println("--------------------------");
-      Serial.println((int)byteCount);
-      Serial.println(line);
-    }
-    */
-    if (byteCount == 0) {
 
-      return;
+    // fast reject if address not present
+    if (!strstr(line, blk.addr[a])) {
+      continue;
     }
 
     /* ---- OFFSET PROCESSING ---- */
     for (uint8_t o = 0; o + 1 < blk.offsetCount[a]; o += 2) {
+
       uint8_t off1 = blk.offsets[a][o];
       uint8_t off2 = blk.offsets[a][o + 1];
-      if (off1 >= byteCount) {
-        continue;
-      }
-    
+
       uint16_t v;
-      
-      if (off1 == off2) {
-        // single byte, zero-extended
-        v = bytes[off1];
-      } else {
-        if (off2 >= byteCount) {
-          continue;
-        }
-        v = (uint16_t)bytes[off1] | ((uint16_t)bytes[off2] << 8);
+
+      if (!readValueAtOffset(
+              line,
+              blk.addr[a],
+              off1,
+              off2,
+              cis[PARSING_STYLE],
+              v))
+      {
+        continue;   // parse failed for this offset pair
       }
 
+      uint16_t bytePacketStart =
+        calculateOffsetIndex(
+          blocks,
+          parsedStringConfigCount,
+          activeBlock,
+          a
+        );
 
-      uint16_t bytePacketStart = calculateOffsetIndex(blocks, parsedStringConfigCount, activeBlock, a);
-     
-
-      
-      //Serial.println(line);
       appendU16(
         v,
         bytePacketStart + o,
         (int8_t)activeBlock,
-        a,           // address index
-        o,           // offset rule index
+        a,      // address index
+        o,      // offset rule index
         off1,
         off2,
-        byteCount
+        0       // byteCount no longer relevant here
       );
     }
-
-    //break;   // only one address per line
   }
 }
 
+bool hexByteAt(const char *p, uint8_t &out)
+{
+  if (!isxdigit(p[0]) || !isxdigit(p[1])) {
+    return false;
+  }
 
+  char tmp[3] = { p[0], p[1], 0 };
+  out = (uint8_t)strtoul(tmp, nullptr, 16);
+  return true;
+}
+
+const char *findNthToken(const char *s, uint8_t n)
+{
+  uint8_t count = 0;
+
+  while (*s) {
+    while (*s == ' ') s++;
+    if (!*s) break;
+
+    if (count++ == n) {
+      return s;
+    }
+
+    while (*s && *s != ' ') s++;
+  }
+
+  return nullptr;
+}
+
+
+bool readValueAtOffset(
+    const char *line,
+    const char *addrStr,
+    uint8_t off1,
+    uint8_t off2,
+    uint8_t parsingStyle,
+    uint16_t &outValue)
+{
+  const char *addrPos = strstr(line, addrStr);
+  if (!addrPos) return false;
+
+  addrPos += strlen(addrStr);
+
+  const char *p1 = nullptr;
+  const char *p2 = nullptr;
+
+  /* ---- OFFSET RESOLUTION ---- */
+
+  if (parsingStyle & PS_CHAR_OFFSET) {
+    // character-based offset
+    p1 = addrPos + off1;
+    p2 = addrPos + off2;
+  } else {
+    // token-based offset
+    p1 = findNthToken(addrPos, off1);
+    p2 = findNthToken(addrPos, off2);
+  }
+
+  if (!p1) return false;
+  if (off2 != off1 && !p2) return false;
+
+  uint8_t b0 = 0;
+  uint8_t b1 = 0;
+
+  /* ---- VALUE INTERPRETATION ---- */
+
+  if (parsingStyle & PS_ASCII_VALUE) {
+    // raw ASCII characters
+    b0 = (uint8_t)p1[0];
+    b1 = (off2 != off1 && p2) ? (uint8_t)p2[0] : 0;
+  } else {
+    // hex interpretation
+    if (!hexByteAt(p1, b0)) return false;
+    if (off2 != off1 && !hexByteAt(p2, b1)) return false;
+  }
+
+  /* ---- ENDIANNESS ---- */
+
+  if (off1 == off2) {
+    outValue = b0;
+  } else if (parsingStyle & PS_BIG_ENDIAN) {
+    outValue = ((uint16_t)b0 << 8) | b1;
+  } else {
+    outValue = ((uint16_t)b1 << 8) | b0;
+  }
+
+  return true;
+}
 
 bool readSerialLine(char *line, uint8_t maxLen) {
   static uint8_t idx = 0;
