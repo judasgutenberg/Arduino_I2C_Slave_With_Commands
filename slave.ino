@@ -5,7 +5,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2023
+#define VERSION 2027
 
 #define INT_CONFIGS 10
 
@@ -21,26 +21,26 @@
 #define SERIAL_MODE     9
 
 // Existing watchdog commands
-#define COMMAND_REBOOT 128
-#define COMMAND_MILLIS 129
-#define COMMAND_LASTWATCHDOGREBOOT 130
+#define COMMAND_REBOOT              128
+#define COMMAND_MILLIS              129
+#define COMMAND_LASTWATCHDOGREBOOT  130
 #define COMMAND_WATCHDOGREBOOTCOUNT 131
-#define COMMAND_LASTWATCHDOGPET 132
-#define COMMAND_LASTPETATBITE 133
-#define COMMAND_REBOOTMASTER 134
-#define COMMAND_WATCHDOGPETBASE 200
+#define COMMAND_LASTWATCHDOGPET     132
+#define COMMAND_LASTPETATBITE       133
+#define COMMAND_REBOOTMASTER        134
+#define COMMAND_WATCHDOGPETBASE     200
 
 // New EEPROM-style commands
-#define COMMAND_EEPROM_SETADDR  150   // set pointer for read/write
-#define COMMAND_EEPROM_WRITE    151  // sequential write mode
-#define COMMAND_EEPROM_READ     152  // sequential read mode
-#define COMMAND_EEPROM_NORMAL   153  // exit EEPROM mode, back to default behavior
+#define COMMAND_EEPROM_SETADDR      150   // set pointer for read/write
+#define COMMAND_EEPROM_WRITE        151   // sequential write mode
+#define COMMAND_EEPROM_READ         152   // sequential read mode
+#define COMMAND_EEPROM_NORMAL       153   // exit EEPROM mode, back to default behavior
 
-#define COMMAND_VERSION         160
-#define COMMAND_COMPILEDATETIME 161
-#define COMMAND_TEMPERATURE     162
-#define COMMAND_FREEMEMORY      163
-#define COMMAND_GET_SLAVE_CONFIG 164
+#define COMMAND_VERSION             160
+#define COMMAND_COMPILEDATETIME     161
+#define COMMAND_TEMPERATURE         162
+#define COMMAND_FREEMEMORY          163
+#define COMMAND_GET_SLAVE_CONFIG    164
 
 
 //serial commands
