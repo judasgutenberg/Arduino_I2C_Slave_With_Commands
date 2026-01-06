@@ -5,7 +5,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2029 //enabled COMMAND_REBOOT
+#define VERSION 2030 //enabled COMMAND_REBOOT, set unix time for last data parse
 
 #define INT_CONFIGS 10
 
@@ -1074,6 +1074,7 @@ void processSerialStream()
       {
         continue;   // parse failed for this offset pair
       }
+      lastDataParseTime = unixTime;
 
       uint16_t bytePacketStart =
         calculateOffsetIndex(
