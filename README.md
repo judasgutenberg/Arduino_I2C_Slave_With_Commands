@@ -8,7 +8,7 @@ master_slave.ino (and master_slave.h if you want master_slave.ino to instead be 
 This version adds the ability for an Arduino Slave to run a number of commands issued by a master.  These commands are all pin actions to pins numbered between 128 and 255. On an Arduino, such actions are to pin numbers that are beyond those likely to be present (at least as of 2025), so they are available for a wide range of uses.  For now the commands are:
 
 
-128: reboot slave (this doesn't work, because doing it breaks I2C irreperably)
+128: reboot slave  
 
 129: return millis() value of slave
 
