@@ -48,9 +48,23 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 174: get last parsed data arriving via serial
 
+175: set parsed serial packet offset
+
+176: get specific parsed serial datum (by ordinal)
+
+177: get number of serial parse configurations
+
+178: get size of parsed serial packet in bytes
+
+179: set serial mode (0: no serial, 1: serial monitor, 2: parse serial for data using parse configuration)
+
 180: set UNIX time
 
 181: get UNIX time
+
+182: get slave configuration given index
+
+183: set slave configuration at index with value
 
 20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  This mechanism also allows the master to send the Unix timestamp so the the slave can keep track of Unix time independently. There are a range of pet-the-watchdog commands:
 
