@@ -2,7 +2,7 @@
 
 This is based on the simpler <a href=https://github.com/judasgutenberg/Generic_Arduino_I2C_Slave>Generic_Arduino_I2C_Slave</a> and this firmware is compatible with I2C masters only expecting that firmware.
 
-master_slave.ino (and master_slave.h if you want master_slave.ino to instead be a .cpp file) are a library of functions for communicating with this slave from a master.  This is taken directly from my ESP8266_Remote repository and will probably need tweaking to work with your code (for example, it refers to a global and utility files that aren't in this repository).
+master_slave.ino (and master_slave.h if you want master_slave.ino to instead be a .cpp file) are a library of functions for communicating with this slave from a master.  This is taken directly from my ESP8266_Remote repository and will probably need tweaking to work with your code (for example, it refers to a global, config, and utility files that aren't in this repository).
 
 
 This version adds the ability for an Arduino Slave to run a number of commands issued by a master.  These commands are all pin actions to pins numbered between 128 and 255. On an Arduino, such actions are to pin numbers that are beyond those likely to be present (at least as of 2025), so they are available for a wide range of uses.  For now the commands are:
