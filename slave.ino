@@ -5,7 +5,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2028
+#define VERSION 2029 //enabled COMMAND_REBOOT
 
 #define INT_CONFIGS 10
 
@@ -527,7 +527,7 @@ void handleCommand(byte command, uint32_t value) {
 
 // ---- Software Reset ----
 void software_reset(void) {
-    return; // disabled for safety
+    //return; // disabled for safety
     cli();
     TWCR = 0;
     DDRC &= ~((1<<PC4) | (1<<PC5));
