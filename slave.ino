@@ -9,7 +9,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2032 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2034 //enabled COMMAND_REBOOT, set unix time for last data parse
 
 #define INT_CONFIGS 10
 
@@ -92,7 +92,15 @@ struct ConfigBlock {
   uint8_t offsetCount[MAX_ADDRS];
 };
 
-//sample block population from a config like so: Characteristic #2|0x3ffbb61c|0x3ffbb5fc|4|5|6|7|8|9|10|11|0x3ffbb60c|0|1
+
+//The serial parser (cis[SERIAL_MODE] == 2) is configured with cstrings stored in EEPROM starting after the DATA intro at SLAVE_CONFIG bytes into the EEPROM
+//a typical parser config looks like: Characteristic #2|0x3ffbb61c|0x3ffbb5fc|4|5|6|7|8|9|10|11|0x3ffbb60c|0|1
+//where the parser examines data between the strings "Characteristic #2" and "0x3ffbb61c" found in the serial stream.
+//it then looks inside that for the string "0x3ffbb5fc" and returns low-endian 16-bit values between the offsets 4 & 5, 6 & 7, 8 & 9...
+//it then looks further for the string "0x3ffbb60c" and returns low-endian 16-bit values between the offsets 0 & 1
+//The parsed values end up in the data packet parsedBuf
+//for parsing purposes, the configuration strings are put in structs of type ConfigBlock
+//Sample ConfigBlock population from a config like so: Characteristic #2|0x3ffbb61c|0x3ffbb5fc|4|5|6|7|8|9|10|11|0x3ffbb60c|0|1
 /*
 
 start = "Characteristic #2"
@@ -121,7 +129,8 @@ struct CircularBuffer {
 // ---- CONFIG ----
 
 //for config items stored locally in the EEPROM
-uint16_t cis[INT_CONFIGS];
+uint16_t cis[INT_CONFIGS]; //the configuration array, which contains unsigned 16 bit values. This gets defaults from initDefaultConfig()
+//and if there are EEPROM values, those are overridden
 
 uint8_t rxStorage[RX_SIZE];
 uint8_t txStorage[TX_SIZE];
@@ -188,7 +197,7 @@ void setup() {
     
     pinMode(cis[REBOOT_PIN], OUTPUT);
     digitalWrite(cis[REBOOT_PIN], HIGH); // idle high
-    setupTimer1();
+    setupTimer1(); //used to accurately increment unixTime once set
     lastWatchdogPet = millis(); // start watchdog timer
 }
 
