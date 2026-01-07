@@ -25,6 +25,9 @@
 #define COMMAND_GET_PARSED_SERIAL_DATA      174
 #define COMMAND_SET_PARSED_OFFSET           175
 #define COMMAND_GET_PARSED_DATUM            176
+#define COMMAND_GET_PARSE_CONFIG_NUMBER     177
+#define COMMAND_GET_PARSED_PACKET_SIZE      178
+#define COMMAND_SET_SERIAL_MODE             179
 
 #define COMMAND_SET_UNIX_TIME               180
 #define COMMAND_GET_UNIX_TIME               181
@@ -545,25 +548,38 @@ size_t readBytesFromSlaveSerial( char* buffer, size_t maxLen) {
 }
 
 void sendSlaveSerial(String inVal) {
-  if(ci[SLAVE_I2C] < 1) {
+  if (ci[SLAVE_I2C] < 1) {
     return;
   }
-  inVal.trim(); 
-  char buffer[50];    
-  inVal.toCharArray(buffer, sizeof(buffer));
- 
-  delay(5);
-  Wire.beginTransmission(ci[SLAVE_I2C]);
-  Wire.write(COMMAND_POPULATE_SERIAL_BUFFER);
-  int stringLen = inVal.length();
-  if(stringLen > 30) {
-    stringLen = 30;
+  inVal.trim();
+  const uint8_t MAX_I2C_PAYLOAD = 31; // 32 - 1 command byte
+  char buffer[128];                  // adjust if you expect longer strings
+  int totalLen = inVal.length();
+  if (totalLen == 0) {
+    return;
   }
-  Wire.write(buffer, stringLen); 
-  Wire.endTransmission();
-  delay(5);
+  // clamp to buffer size
+  if (totalLen >= sizeof(buffer)) {
+    totalLen = sizeof(buffer) - 1;
+  }
+  inVal.toCharArray(buffer, sizeof(buffer));
+  uint16_t offset = 0;
+  while (offset < totalLen) {
+    uint8_t chunkLen = totalLen - offset;
+    if (chunkLen > MAX_I2C_PAYLOAD) {
+      chunkLen = MAX_I2C_PAYLOAD;
+    }
+    delay(5);
+    Wire.beginTransmission(ci[SLAVE_I2C]);
+    Wire.write(COMMAND_POPULATE_SERIAL_BUFFER);
+    Wire.write((uint8_t*)(buffer + offset), chunkLen);
+    Wire.endTransmission();
+    delay(5);
+    offset += chunkLen;
+  }
   normalSlaveMode();
 }
+
 
 void normalSlaveMode() {
   if(ci[SLAVE_I2C] < 1) {
@@ -637,11 +653,12 @@ uint32_t getSlaveConfigItem(uint8_t ordinal) {
     byte singleByte = Wire.read();
     //Serial.print("byte: ");
     //Serial.println(singleByte);
-    //buffer[i++] = singleByte;
+    buffer[i++] = singleByte;
   }
   for (int j = 0; j < i; j++) {
     value |= ((long)buffer[j] << (8 * j));
   }
+  //Serial.println(value);
   return value;
 }
 
