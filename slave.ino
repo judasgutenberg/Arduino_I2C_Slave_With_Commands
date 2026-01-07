@@ -9,7 +9,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2038 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2039 //enabled COMMAND_REBOOT, set unix time for last data parse
 
 #define INT_CONFIGS 10
 
@@ -48,7 +48,7 @@
 #define COMMAND_GET_SLAVE_CONFIG    164   //returns where in the EEPROM the slave's local configuration is persisted
 
 //serial commands
-#define COMMAND_PARSE_BUFFER                169   //explicitly parse data in a buffer using the serial parser system
+#define COMMAND_PARSE_BUFFER                169   //explicitly parse data in the txBuffer using the serial parser system
 #define COMMAND_SERIAL_SET_BAUD_RATE        170   //using an ordinal to set common serial baud rates.  1 is 300, 5 is 9600, 9 is 115200
 #define COMMAND_RETRIEVE_SERIAL_BUFFER      171   //retrieves values from the serial read buffer if we are in serial mode #1
 #define COMMAND_POPULATE_SERIAL_BUFFER      172   //sets values in the serial buffer that the slave will transmit via serial
@@ -61,8 +61,9 @@
 #define COMMAND_SET_SERIAL_MODE             179   //sets serial mode:  
                                                   //0 - no serial
                                                   //1 - serial pass-through to master
-                                                  //2 - slave parses incoming values in serial and outgoing serial source is from slave
-                                                  //4 - parses incoming values in serial, though serial source is from master via I2C
+                                                  //2 - slave parses incoming values in serial but cannot transmit serial values
+                                                  //3 - gather interesting serial lines from parser for master to pick up
+                                                  //4 - parses incoming values in serial, though can still transmit data serial port
                                                   //5 - fakes the reception of data via serial using I2C data sent from master using send slave serial (command COMMAND_POPULATE_SERIAL_BUFFER)
 #define COMMAND_SET_UNIX_TIME               180   //sets unix timestamp, which the slave the automatically advances with reasonable accuracy
 #define COMMAND_GET_UNIX_TIME               181   //returns unix timestamp as known to the slave
@@ -99,7 +100,7 @@ struct ConfigBlock {
 };
 
 
-//The serial parser (cis[SERIAL_MODE] == 2 or 4) is configured with cstrings stored in EEPROM starting after the "DATA" intro at SLAVE_CONFIG bytes into the EEPROM
+//The serial parser (cis[SERIAL_MODE] == 2, 3 or 4) is configured with cstrings stored in EEPROM starting after the "DATA" intro at SLAVE_CONFIG bytes into the EEPROM
 //a typical parser config looks like: Characteristic #2|0x3ffbb61c|0x3ffbb5fc|4|5|6|7|8|9|10|11|0x3ffbb60c|0|1
 //where the parser examines data between the strings "Characteristic #2" and "0x3ffbb61c" found in the serial stream.
 //it then looks inside that for the string "0x3ffbb5fc" and returns low-endian 16-bit values between the offsets 4 & 5, 6 & 7, 8 & 9...
@@ -210,7 +211,7 @@ void setup() {
 void loop() {
     unsigned long now = millis();
     //Serial.println(now);
-    if(cis[BAUD_RATE_LEVEL] > 0 && (cis[SERIAL_MODE] == 2 || cis[SERIAL_MODE] == 4)) {
+    if(cis[BAUD_RATE_LEVEL] > 0 && (cis[SERIAL_MODE] == 2  || cis[SERIAL_MODE] == 3 || cis[SERIAL_MODE] == 4)) {
       processSerialStream();
     }
  
@@ -228,8 +229,7 @@ void loop() {
       interrupts();
       //Serial.println("*");
     }
-    if(cis[BAUD_RATE_LEVEL] > 0 && (cis[SERIAL_MODE] == 1 || cis[SERIAL_MODE] == 4)) {
-
+    if(cis[BAUD_RATE_LEVEL] > 0 && (cis[SERIAL_MODE] == 1 || cis[SERIAL_MODE] == 3 || cis[SERIAL_MODE] == 4)) {
       cbSendLatest(txBuffer);  
     }
     if(cis[BAUD_RATE_LEVEL] > 0 && cis[SERIAL_MODE] == 1 ) {
@@ -848,7 +848,13 @@ void initDefaultConfig() {
   cis[BAUD_RATE_LEVEL]  = 9;
   cis[I2C_ADDRESS]      = 20;
   cis[REBOOT_PIN]       = 7;
-  cis[SERIAL_MODE]      = 2; //possible values: 0 - no serial, 1 - serial passthrough to master, 2 - slave parses values from serial according to css configs
+  cis[SERIAL_MODE]      = 2;
+                        //0 - no serial
+                        //1 - serial pass-through to master
+                        //2 - slave parses incoming values in serial but cannot transmit serial values
+                        //3 - gather interesting serial lines from parser for master to pick up
+                        //4 - parses incoming values in serial, though can still transmit data serial port
+                        //5 - fakes the reception of data via serial using I2C data sent from master using send slave serial (command COMMAND_POPULATE_SERIAL_BUFFER)
 }
 
 void initSlaveConfigFromEeprom() {
@@ -1093,24 +1099,13 @@ uint8_t extractHexBytes(const char *line,
 void processSerialStream()
 {
   static char line[100];
-  if(cis[SERIAL_MODE] != 5) {
+  if(cis[SERIAL_MODE] < 5) {
     if (!readSerialLine(line, sizeof(line))) {
       return;
     }
   } else { //get "serial data" from the master via I2C using the txBuffer
-
-    //Serial.println(cb.data[cb.tail]);
-  
- 
     circularBufferToCStr(&txBuffer, line, 100, true);
- 
-    Serial.println(line);
-
-
-    //Serial.println("/////////////");
-    //Serial.println(cis[SERIAL_MODE] ); 
     //Serial.println(line);
-    //handle in loop
   }
   /* ---- BLOCK START DETECTION ---- */
   for (uint8_t i = 0; i < blockCount; i++) {
@@ -1143,7 +1138,10 @@ void processSerialStream()
     if (!strstr(line, blk.addr[a])) {
       continue;
     }
-
+    if(cis[SERIAL_MODE] == 3) { //used for just shipping the data-bearing lines back to the master to be forwarded to the backend for logging and analysis
+      cbPutArray(rxBuffer, line, strlen(line));
+      return;
+    }
     /* ---- OFFSET PROCESSING ---- */
     for (uint8_t o = 0; o + 1 < blk.offsetCount[a]; o += 2) {
 
