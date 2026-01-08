@@ -9,7 +9,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2040 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2041 //enabled COMMAND_REBOOT, set unix time for last data parse
 
 #define INT_CONFIGS 10
 
