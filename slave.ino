@@ -9,7 +9,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2039 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2040 //enabled COMMAND_REBOOT, set unix time for last data parse
 
 #define INT_CONFIGS 10
 
@@ -101,13 +101,13 @@ struct ConfigBlock {
 
 
 //The serial parser (cis[SERIAL_MODE] == 2, 3 or 4) is configured with cstrings stored in EEPROM starting after the "DATA" intro at SLAVE_CONFIG bytes into the EEPROM
-//a typical parser config looks like: Characteristic #2|0x3ffbb61c|0x3ffbb5fc|4|5|6|7|8|9|10|11|0x3ffbb60c|0|1
+//a typical parser config looks like: Characteristic #2;0x3ffbb61c;0x3ffbb5fc;4;5;6;7;8;9;10;11;0x3ffbb60c;0;1
 //where the parser examines data between the strings "Characteristic #2" and "0x3ffbb61c" found in the serial stream.
 //it then looks inside that for the string "0x3ffbb5fc" and returns low-endian 16-bit values between the offsets 4 & 5, 6 & 7, 8 & 9...
 //it then looks further for the string "0x3ffbb60c" and returns low-endian 16-bit values between the offsets 0 & 1
 //The parsed values end up in the data packet parsedBuf
 //for parsing purposes, the configuration strings are put in structs of type ConfigBlock
-//Sample ConfigBlock population from a config like so: Characteristic #2|0x3ffbb61c|0x3ffbb5fc|4|5|6|7|8|9|10|11|0x3ffbb60c|0|1
+//Sample ConfigBlock population from a config like so: Characteristic #2;0x3ffbb61c;0x3ffbb5fc;4;5;6;7;8;9;10;11;0x3ffbb60c;0;1
 /*
 
 start = "Characteristic #2"
@@ -947,7 +947,7 @@ void parseConfigString(const char *cfg, ConfigBlock &out) {
   strncpy(buf, cfg, sizeof(buf));
   buf[sizeof(buf) - 1] = 0;
 
-  char *tok = strtok(buf, "|");
+  char *tok = strtok(buf, ";");
   if (!tok) {
     return;
   }
@@ -955,14 +955,14 @@ void parseConfigString(const char *cfg, ConfigBlock &out) {
   //Serial.println("-----");
   //Serial.println( out.start);
   //Serial.println( out.end);
-  tok = strtok(NULL, "|");
+  tok = strtok(NULL, ";");
   if (!tok) return;
   strncpy(out.end, tok, sizeof(out.end));
 
   out.addrCount = 0;
   uint8_t curAddr = 255;
 
-  while ((tok = strtok(NULL, "|"))) {
+  while ((tok = strtok(NULL, ";"))) {
     //Serial.println(tok);
     if (!isInteger(tok)) { //any token in the config that is not explicitly a decimal integer is a string to be searched for
       curAddr = out.addrCount++;
