@@ -2,6 +2,9 @@
 //an I2C slave is a port expander, a place to persist configuration data, and a flexible serial port monitor & parser
 //Gus Mueller, 2024 - 2026
 //based on this earlier, simpler version:  https://github.com/judasgutenberg/Generic_Arduino_I2C_Slave
+
+#include <avr/sleep.h>
+#include <avr/power.h>
 #include <Wire.h>
 #include <TimeLib.h>
 #include <avr/wdt.h>
@@ -9,13 +12,24 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2041 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2043 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define TARGET_SRAM_KILOBYTES 8 //for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
 
-#define RX_SIZE 100
-#define TX_SIZE 100  //this only needs to be 100 if you are using serial_mode 5. if you make this smaller
-                     //you have more memory to make MAX_BLOCKS bigger
+#if TARGET_SRAM_KILOBYTES <= 2
+  #define RX_SIZE 100
+  #define TX_SIZE 100
+#elif TARGET_SRAM_KILOBYTES <= 4
+  #define RX_SIZE 1500
+  #define TX_SIZE 1500 
+#elif TARGET_SRAM_KILOBYTES <= 8
+  #define RX_SIZE 2000
+  #define TX_SIZE 2000 
+#else
+  #define RX_SIZE 2500
+  #define TX_SIZE 2500 
+#endif
 
 
 //Indexes into integer configuration array
@@ -33,6 +47,10 @@
 #define COMMAND_LASTWATCHDOGPET     132   //millis() of the last time the master petted the slave in its watchdog function
 #define COMMAND_LASTPETATBITE       133   //how many seconds late the last watchdog pet was when the slave sent a reboot signal
 #define COMMAND_REBOOTMASTER        134   //reboot the master now by asserting the reboot line
+#define COMMAND_SLEEP               135   //go into the kind of sleep where I2C will wake it up
+#define COMMAND_DEEP_SLEEP          136   //go into unreachably deep sleep for n seconds
+#define COMMAND_POWER_TYPE          137   //0: normal, 1: switch to low-power mode (going lightly to sleep after handling the last I2C request)
+
 #define COMMAND_WATCHDOGPETBASE     200   //commands above 200 are used to tell the slave how often it needs to be petted.  this command can also update the slave's unix timestamp
 
 // New EEPROM-style commands
@@ -75,11 +93,31 @@
 
 //These configure the serial parser using data from the css array
 //Making MAX_BLOCKS bigger than 3 will easily max-out the 2K of memory on an Atmega328. If you have complex parsing needs, use an Atmega2560 (8k of RAM!)
-#define MAX_BLOCKS 3
-#define MAX_ADDRS  3
-#define MAX_OFFSETS 8
 
-#define MAX_CFG_LEN 120
+#if TARGET_SRAM_KILOBYTES <= 2
+  #define MAX_BLOCKS 3
+  #define MAX_ADDRS  2
+  #define MAX_OFFSETS 8
+  #define MAX_CFG_LEN 120
+#elif TARGET_SRAM_KILOBYTES <= 4
+  #define MAX_BLOCKS 4
+  #define MAX_ADDRS  3
+  #define MAX_OFFSETS 10
+  #define MAX_CFG_LEN 150
+#elif TARGET_SRAM_KILOBYTES <= 8
+  #define MAX_BLOCKS 5
+  #define MAX_ADDRS  4
+  #define MAX_OFFSETS 10
+  #define MAX_CFG_LEN 200
+#else
+  #define MAX_BLOCKS 6
+  #define MAX_ADDRS  6
+  #define MAX_OFFSETS 10
+  #define MAX_CFG_LEN 220
+#endif
+
+
+
 #define PARSED_BUF_MAX 30   // bytes (15 values)
 
 #define PS_BIG_ENDIAN   0x04
@@ -171,6 +209,8 @@ volatile uint32_t unixTime = 0;
 volatile uint32_t lastDataParseTime = 0;
 
 volatile uint8_t multiRequestOffset = 0;
+volatile uint32_t deferredParameter = 0;
+volatile uint8_t powerMode = 0;
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -252,9 +292,20 @@ void loop() {
     }
 
     if(deferredCommand == COMMAND_REBOOT) { // async reboot
-        software_reset();
         deferredCommand = 0;
+        softwareReset();
     }
+    if(deferredCommand == COMMAND_SLEEP) { // async sleep
+        deferredCommand = 0;
+        goToSleepIdle();
+    }
+    if(deferredCommand == COMMAND_DEEP_SLEEP) { // async sleep
+        deferredCommand = 0;
+        deepSleepForSeconds(deferredParameter);
+        deferredParameter = 0;
+    }
+
+    
 }
 
 ISR(TIMER1_COMPA_vect) {
@@ -334,10 +385,16 @@ void requestEvent() {
   } else {
     writeWireLong(dataToSend);
   }
+  if(powerMode == 1){
+    goToSleepIdle();
+  }
 }
 
 void receiveEvent(int howMany) {
     if (howMany < 1) {
+      if(powerMode == 1){
+        goToSleepIdle();
+      }
       return;
     }
 
@@ -380,6 +437,8 @@ void receiveEvent(int howMany) {
       unixTime = value;
     } else if (command == COMMAND_GET_UNIX_TIME) {
       dataToSend = unixTime;
+    } else if (command == COMMAND_POWER_TYPE) {
+      powerMode = (uint8_t)value;
     } else if (command == COMMAND_GET_PARSE_CONFIG_NUMBER) {
       dataToSend = parsedStringConfigCount;
     } else if (command == COMMAND_GET_PARSED_PACKET_SIZE) {
@@ -454,6 +513,9 @@ void receiveEvent(int howMany) {
                 eepromMode = 0;  // back to normal behavior
                 break;
         }
+        if(powerMode == 1){
+          goToSleepIdle();
+        }
         return; // handled, skip other logic
     }
 
@@ -477,6 +539,9 @@ void receiveEvent(int howMany) {
             dataToSend = digitalRead(command);
         }
     }
+    if(powerMode == 1){
+      goToSleepIdle();
+    }
 }
 
 // ---- Command Handler ----
@@ -484,8 +549,16 @@ void handleCommand(byte command, uint32_t value) {
     switch (command) {
         case COMMAND_REBOOT:
             deferredCommand = command;
+            deferredParameter = value;
             break;
-
+        case COMMAND_SLEEP:
+            deferredCommand = command;
+            deferredParameter = value;
+            break;
+        case COMMAND_DEEP_SLEEP:
+            deferredCommand = command;
+            deferredParameter = value;
+            break;
         case COMMAND_MILLIS:
             dataToSend = millis();
             break;
@@ -551,7 +624,7 @@ void handleCommand(byte command, uint32_t value) {
 }
 
 // ---- Software Reset ----
-void software_reset(void) {
+void softwareReset(void) {
     //return; // disabled for safety
     cli();
     TWCR = 0;
@@ -795,6 +868,76 @@ int freeMemory() {
   int v;
   return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
 }
+
+void deepSleepForSeconds(uint32_t seconds) {
+  while (seconds > 0) {
+    if (seconds >= 8) {
+      setupWatchdogInterval((1 << WDP3) | (1 << WDP0)); // ~8s
+      sleepOnce();
+      seconds -= 8;
+    } else if (seconds >= 4) {
+      setupWatchdogInterval((1 << WDP3)); // ~4s
+      sleepOnce();
+      seconds -= 4;
+    } else if (seconds >= 2) {
+      setupWatchdogInterval((1 << WDP2) | (1 << WDP1)); // ~2s
+      sleepOnce();
+      seconds -= 2;
+    } else if (seconds >= 1) {
+      setupWatchdogInterval((1 << WDP2)); // ~1s
+      sleepOnce();
+      seconds -= 1;
+    } else {
+      // fractional remainder: use 500 ms
+      setupWatchdogInterval((1 << WDP1) | (1 << WDP0)); // ~500ms
+      sleepOnce();
+      seconds = 0;
+    }
+  }
+}
+
+void goToSleepIdle() {
+  set_sleep_mode(SLEEP_MODE_IDLE);
+  sleep_enable();
+
+  // Optional but recommended: disable brown-out during sleep
+  //sleep_bod_disable(); //this is available on an Atmega328
+
+  sleep_cpu();   // CPU sleeps here
+
+  // Execution resumes here after I2C activity
+  sleep_disable();
+}
+
+void sleepOnce() {
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  sleep_enable();
+  //sleep_bod_disable(); //this is available on an Atmega328
+  sleep_cpu();
+  sleep_disable();
+}
+
+void setupWatchdogInterval(uint8_t wdpBits) {
+  cli();
+  MCUSR &= ~(1 << WDRF);
+  WDTCSR |= (1 << WDCE) | (1 << WDE);
+  WDTCSR = (1 << WDIE) | wdpBits;
+  sei();
+}
+
+
+void goToDeepSleep() {
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  sleep_enable();
+  //sleep_bod_disable(); //this is available on an Atmega328
+  sleep_cpu();          // sleep here
+  sleep_disable();
+}
+
+ISR(WDT_vect) {
+  // nothing required
+}
+
 
 //////////////////////////////////////////////
 //UTILITY:
