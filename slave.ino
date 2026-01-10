@@ -13,7 +13,7 @@
 #include <EEPROM.h> // needed for EEPROM read/write
 
 #define VERSION 2043 //enabled COMMAND_REBOOT, set unix time for last data parse
-#define TARGET_SRAM_KILOBYTES 8 //for Atmega328, 8 for Atmega2560
+#define TARGET_SRAM_KILOBYTES 4 //2 for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
 
@@ -21,8 +21,8 @@
   #define RX_SIZE 100
   #define TX_SIZE 100
 #elif TARGET_SRAM_KILOBYTES <= 4
-  #define RX_SIZE 1500
-  #define TX_SIZE 1500 
+  #define RX_SIZE 1000
+  #define TX_SIZE 500 
 #elif TARGET_SRAM_KILOBYTES <= 8
   #define RX_SIZE 2000
   #define TX_SIZE 2000 
@@ -102,13 +102,13 @@
 #elif TARGET_SRAM_KILOBYTES <= 4
   #define MAX_BLOCKS 4
   #define MAX_ADDRS  3
-  #define MAX_OFFSETS 10
-  #define MAX_CFG_LEN 150
+  #define MAX_OFFSETS 8
+  #define MAX_CFG_LEN 120
 #elif TARGET_SRAM_KILOBYTES <= 8
   #define MAX_BLOCKS 5
   #define MAX_ADDRS  4
   #define MAX_OFFSETS 10
-  #define MAX_CFG_LEN 200
+  #define MAX_CFG_LEN 150
 #else
   #define MAX_BLOCKS 6
   #define MAX_ADDRS  6
