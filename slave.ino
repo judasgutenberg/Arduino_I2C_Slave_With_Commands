@@ -13,7 +13,7 @@
 #include <EEPROM.h> // needed for EEPROM read/write
 
 #define VERSION 2043 //enabled COMMAND_REBOOT, set unix time for last data parse
-#define TARGET_SRAM_KILOBYTES 4 //2 for Atmega328, 8 for Atmega2560
+#define TARGET_SRAM_KILOBYTES 2 //2 for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
 
@@ -33,6 +33,7 @@
 
 
 //Indexes into integer configuration array
+#define POWER_MODE      4
 #define PARSING_STYLE   5
 #define BAUD_RATE_LEVEL 6
 #define I2C_ADDRESS     7
@@ -49,7 +50,6 @@
 #define COMMAND_REBOOTMASTER        134   //reboot the master now by asserting the reboot line
 #define COMMAND_SLEEP               135   //go into the kind of sleep where I2C will wake it up
 #define COMMAND_DEEP_SLEEP          136   //go into unreachably deep sleep for n seconds
-#define COMMAND_POWER_TYPE          137   //0: normal, 1: switch to low-power mode (going lightly to sleep after handling the last I2C request)
 
 #define COMMAND_WATCHDOGPETBASE     200   //commands above 200 are used to tell the slave how often it needs to be petted.  this command can also update the slave's unix timestamp
 
@@ -96,7 +96,7 @@
 
 #if TARGET_SRAM_KILOBYTES <= 2
   #define MAX_BLOCKS 3
-  #define MAX_ADDRS  2
+  #define MAX_ADDRS  3
   #define MAX_OFFSETS 8
   #define MAX_CFG_LEN 120
 #elif TARGET_SRAM_KILOBYTES <= 4
@@ -210,7 +210,7 @@ volatile uint32_t lastDataParseTime = 0;
 
 volatile uint8_t multiRequestOffset = 0;
 volatile uint32_t deferredParameter = 0;
-volatile uint8_t powerMode = 0;
+volatile uint8_t powerState = 0;
 
 // EEPROM mode state
 byte eepromMode = 0;             // 0 = normal, 1 = write, 2 = read
@@ -250,6 +250,7 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
+    powerState++;
     //Serial.println(now);
     if(cis[BAUD_RATE_LEVEL] > 0 && (cis[SERIAL_MODE] == 2  || cis[SERIAL_MODE] == 3 || cis[SERIAL_MODE] == 4)) {
       processSerialStream();
@@ -304,8 +305,15 @@ void loop() {
         deepSleepForSeconds(deferredParameter);
         deferredParameter = 0;
     }
-
-    
+    //if we've done an I2C interrupt handler and then been through a loop once, we can sleep if in powermode 2.  the larger the powermode, the less wasteful
+    if(powerState > 1 && cis[POWER_MODE] == 4 || powerState > 10  && cis[POWER_MODE] == 3 || powerState > 20  && cis[POWER_MODE] == 2 || powerState > 40  && cis[POWER_MODE] == 1){
+      goToSleepIdle();
+    }
+    //these power_modes should only be used if you aren't controlling any devices with your slave. you might also want to turn off the watchdog functionality
+    //although this system should come up in time to receive the next pet
+   if(powerState > 1 && cis[POWER_MODE] == 8  || powerState > 10 && cis[POWER_MODE] == 7 || powerState > 20 && cis[POWER_MODE] == 6 || powerState > 40 && cis[POWER_MODE] == 5) {
+      deepSleepForSeconds(watchdogTimeout);
+   }
 }
 
 ISR(TIMER1_COMPA_vect) {
@@ -338,6 +346,7 @@ void rebootMaster() {
 
 // ---- I2C Callbacks ----
 void requestEvent() {
+  powerState = 1;
   if (eepromMode == 2) {
     for (int i = 0; i < eepromReadCount; i++) {
       Wire.write(EEPROM.read(eepromAddress));
@@ -385,16 +394,11 @@ void requestEvent() {
   } else {
     writeWireLong(dataToSend);
   }
-  if(powerMode == 1){
-    goToSleepIdle();
-  }
 }
 
 void receiveEvent(int howMany) {
+    powerState = 1;
     if (howMany < 1) {
-      if(powerMode == 1){
-        goToSleepIdle();
-      }
       return;
     }
 
@@ -437,8 +441,6 @@ void receiveEvent(int howMany) {
       unixTime = value;
     } else if (command == COMMAND_GET_UNIX_TIME) {
       dataToSend = unixTime;
-    } else if (command == COMMAND_POWER_TYPE) {
-      powerMode = (uint8_t)value;
     } else if (command == COMMAND_GET_PARSE_CONFIG_NUMBER) {
       dataToSend = parsedStringConfigCount;
     } else if (command == COMMAND_GET_PARSED_PACKET_SIZE) {
@@ -513,9 +515,6 @@ void receiveEvent(int howMany) {
                 eepromMode = 0;  // back to normal behavior
                 break;
         }
-        if(powerMode == 1){
-          goToSleepIdle();
-        }
         return; // handled, skip other logic
     }
 
@@ -538,9 +537,6 @@ void receiveEvent(int howMany) {
             pinMode(command, INPUT);
             dataToSend = digitalRead(command);
         }
-    }
-    if(powerMode == 1){
-      goToSleepIdle();
     }
 }
 
@@ -987,6 +983,7 @@ bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr, uint8
 
 //load default config in case we don't have anything in EEPROM
 void initDefaultConfig() {
+  cis[POWER_MODE]       = 1;
   cis[PARSING_STYLE]    = 0;
   cis[BAUD_RATE_LEVEL]  = 9;
   cis[I2C_ADDRESS]      = 20;
