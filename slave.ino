@@ -615,6 +615,7 @@ void handleCommand(byte command, uint32_t value) {
                     }
                 }
                 lastWatchdogPet = millis();
+                dataToSend = lastWatchdogPet;
             }
             break;
     }
