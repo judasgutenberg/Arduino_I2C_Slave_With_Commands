@@ -12,7 +12,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2043 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2044 //enabled COMMAND_REBOOT, set unix time for last data parse
 #define TARGET_SRAM_KILOBYTES 2 //2 for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
@@ -306,12 +306,12 @@ void loop() {
         deferredParameter = 0;
     }
     //if we've done an I2C interrupt handler and then been through a loop once, we can sleep if in powermode 2.  the larger the powermode, the less wasteful
-    if(powerState > 1 && cis[POWER_MODE] == 4 || powerState > 10  && cis[POWER_MODE] == 3 || powerState > 20  && cis[POWER_MODE] == 2 || powerState > 40  && cis[POWER_MODE] == 1){
+    if(powerState > 1 && cis[POWER_MODE] == 5 || powerState > 10  && cis[POWER_MODE] == 4 || powerState > 20  && cis[POWER_MODE] == 3 || powerState > 40  && (cis[POWER_MODE] == 2 || cis[POWER_MODE] == 1)){
       goToSleepIdle();
     }
     //these power_modes should only be used if you aren't controlling any devices with your slave. you might also want to turn off the watchdog functionality
     //although this system should come up in time to receive the next pet
-   if(powerState > 1 && cis[POWER_MODE] == 8  || powerState > 10 && cis[POWER_MODE] == 7 || powerState > 20 && cis[POWER_MODE] == 6 || powerState > 40 && cis[POWER_MODE] == 5) {
+   if(powerState > 1 && cis[POWER_MODE] == 9  || powerState > 10 && cis[POWER_MODE] == 8 || powerState > 20 && cis[POWER_MODE] == 7 || powerState > 40 && cis[POWER_MODE] == 6) {
       deepSleepForSeconds(watchdogTimeout);
    }
 }
@@ -608,7 +608,6 @@ void handleCommand(byte command, uint32_t value) {
                         watchdogTimeout *= 10;
                     }
                     lastTimeoutScale = watchdogTimingIndication;
-                    //Serial.println(value);
                     if(value > 0) {
                       unixTime = value;
                     }
@@ -983,7 +982,7 @@ bool eepromReadCString(int addr, char *out, uint8_t maxLen, int &nextAddr, uint8
 
 //load default config in case we don't have anything in EEPROM
 void initDefaultConfig() {
-  cis[POWER_MODE]       = 1;
+  cis[POWER_MODE]       = 2; //default to mild power savings
   cis[PARSING_STYLE]    = 0;
   cis[BAUD_RATE_LEVEL]  = 9;
   cis[I2C_ADDRESS]      = 20;
