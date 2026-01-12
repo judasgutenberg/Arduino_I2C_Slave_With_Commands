@@ -12,7 +12,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2044 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2045 //enabled COMMAND_REBOOT, set unix time for last data parse
 #define TARGET_SRAM_KILOBYTES 2 //2 for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
@@ -346,6 +346,7 @@ void rebootMaster() {
 
 // ---- I2C Callbacks ----
 void requestEvent() {
+  sleep_disable();
   powerState = 1;
   if (eepromMode == 2) {
     for (int i = 0; i < eepromReadCount; i++) {
@@ -397,6 +398,7 @@ void requestEvent() {
 }
 
 void receiveEvent(int howMany) {
+    sleep_disable();
     powerState = 1;
     if (howMany < 1) {
       return;
