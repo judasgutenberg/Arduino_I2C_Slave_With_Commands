@@ -2,6 +2,12 @@
 
 This is based on the simpler <a href=https://github.com/judasgutenberg/Generic_Arduino_I2C_Slave>Generic_Arduino_I2C_Slave</a> and this firmware is compatible with I2C masters only expecting that firmware.  An I2C Slave is a microcontroller connected to a master via I2C signals that responds to instructions sent via I2C from the master.  The master can use a slave to control additional GPIO pins, access its EEPROM, or even have the slave act as a watchdog to reset it should it fail to occasionally "pet" the slave.
 
+  ![image](masterslave_arduino_schematic.jpg)
+
+
+  ![image](masterslave_arduino.jpg)
+
+
 master_slave.ino (and master_slave.h if you want master_slave.ino to instead be a .cpp file) are a library of functions for communicating with this slave from a master.  This is taken directly from my ESP8266_Remote repository and will probably need tweaking to work with your code (for example, it refers to a global, config, and utility files that aren't in this repository).
 
 
