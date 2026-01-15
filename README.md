@@ -9,6 +9,8 @@ The wiring is pretty trivial, especially to anyone who had to solder wires for a
 
   ![image](masterslave_arduino.jpg)
 
+GPIO pins on the slave are read or controlled in the simplest way possible:  a request to a single byte returns the value of its pins.  Any value sent that is more than one byte is considered a write, with the first byte being the GPIO pin number and everything else being the value.  There is a range of pins that is so large that they do not exist (pins greater than 64) and writing to or reading from those triggers a number of additional functions. 
+
 
 master_slave.ino (and master_slave.h if you want master_slave.ino to instead be a .cpp file) are a library of functions for communicating with this slave from a master.  This is taken directly from my ESP8266_Remote repository and will probably need tweaking to work with your code (for example, it refers to a global, config, and utility files that aren't in this repository).
 
