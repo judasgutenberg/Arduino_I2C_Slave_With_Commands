@@ -1,6 +1,6 @@
 # Arduino I2C Slave With Commands
 
-This is based on the simpler <a href=https://github.com/judasgutenberg/Generic_Arduino_I2C_Slave>Generic_Arduino_I2C_Slave</a> and this firmware is compatible with I2C masters only expecting that firmware.  An I2C Slave is a microcontroller connected to a master via I2C signals that responds to instructions sent via I2C from the master.  The master can use a slave to control additional GPIO pins, access its EEPROM, or even have the slave act as a watchdog to reset it should it fail to occasionally "pet" the slave.
+This is based on the simpler <a href=https://github.com/judasgutenberg/Generic_Arduino_I2C_Slave>Generic_Arduino_I2C_Slave</a> and this firmware is compatible with I2C masters only expecting that firmware.  An I2C Slave is a microcontroller connected to a master via I2C signals that responds to instructions sent via I2C from the master.  The master can use a slave to control additional GPIO pins, access its EEPROM, or even have the slave act as a watchdog to reset it should it fail to occasionally "pet" the slave.  The master can also reflash the slave's firmware if you install <a href=https://github.com/judasgutenberg/twiboot  target=myversion>my version of the twiboot bootloader on the slave</a>.
 
 The wiring is pretty trivial, especially to anyone who had to solder wires for all the data and address lines of a device back in the 1980s:
 
