@@ -78,7 +78,7 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 183: set slave configuration at index with value
 
-190: jump to bootloader - useful when you want the master to reflash the slave's firmware via I2C, which is now supported
+190: jump to bootloader - useful when you want the master to reflash the slave's firmware via I2C, which is now supported.  Before jumping, a magic value is set in a word beginning at location 510 (decimal) in the EEPROM, telling the bootloader to go into reflashing mode.
 
 20X: pet hardware watchdog - if this is implemented, the slave will reboot the master if it is not petted frequently enough.  This mechanism also allows the master to send the Unix timestamp so the the slave can keep track of Unix time independently. There are a range of pet-the-watchdog commands:
 
