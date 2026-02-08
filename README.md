@@ -92,7 +92,7 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 204: pets the watchdog, telling it that it must be petted once every 10000 seconds or it can bite (reset!) -- only requires a pet once every 3 hours.  Also a useful rate.
 
-One particularly useful feature is the serial parser.  This is a system where a slave can be configured to monitor a serial line (one that may not actually attach to the master) looking for certain passages of text to look focus on.  When it detects these, it can then look for data at offsets within these passages and then assemble integers from the data to place in a data packet for retrieval by the master.  This completely offloads serial parsing from the master.  I am using this feature to monitor serial traffic between a SolArk inverter and its WiFi dongle to capture important solar inverter data.
+One particularly useful feature is the serial parser.  This is a system where a slave can be configured to monitor a serial line (one that may not actually attach to the master) looking for certain passages of text to focus on.  When it detects these, it can then look for data at offsets within these passages and then assemble integers from the data to place in a data packet for retrieval by the master.  This completely offloads serial parsing from the master.  I am using this feature to monitor serial traffic between a SolArk inverter and its WiFi dongle to capture important solar inverter data.
 
 205: pets the watchdog, telling it that it must be petted once every 100000 seconds or it can bite (reset!) -- only requires a pet once every day.  Useful, but not super responsive if the master should lock up.
 
