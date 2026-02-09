@@ -12,10 +12,18 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2045 //enabled COMMAND_REBOOT, set unix time for last data parse
+#define VERSION 2077 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
 #define TARGET_SRAM_KILOBYTES 2 //2 for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
+#define LONG_CONFIGS 4
+
+#define BOOT_MAGIC_ADDR 510 
+#define BOOT_MAGIC_VALUE 0xB007
+//4k for atmega328p: 0x7000
+//4k for atmega644p: 0xF000
+//but we no longer even need this:
+//#define BOOTLOADER_START 0xF000 
 
 #if TARGET_SRAM_KILOBYTES <= 2
   #define RX_SIZE 100
@@ -87,11 +95,15 @@
 #define COMMAND_GET_UNIX_TIME               181   //returns unix timestamp as known to the slave
 #define COMMAND_GET_CONFIG                  182   //gets a config item by ordinal number (from the configuration cis[] array)
 #define COMMAND_SET_CONFIG                  183   //sets a config item by ordinal and value
+#define COMMAND_GET_LONG                    184   //gets a config long item in cls by ordinal number (from the configuration cis[] array)
+#define COMMAND_SET_LONG                    185   //sets a config long item in cls by ordinal and value
+
+#define COMMAND_ENTER_BOOTLOADER            190   //reflash bootloader
 
 #define EEPROM_SIZE 1024
 #define SLAVE_CONFIG 512  //where local slave configs live
 
-//These configure the serial parser using data from the css array
+//These configure the serial parser using data from the css array on the master (css is never actually produced on the slave - but it is stored in the EEPROM on the slave)
 //Making MAX_BLOCKS bigger than 3 will easily max-out the 2K of memory on an Atmega328. If you have complex parsing needs, use an Atmega2560 (8k of RAM!)
 
 #if TARGET_SRAM_KILOBYTES <= 2
@@ -174,7 +186,8 @@ struct CircularBuffer {
 // ---- CONFIG ----
 
 //for config items stored locally in the EEPROM
-uint16_t cis[INT_CONFIGS]; //the configuration array, which contains unsigned 16 bit values. This gets defaults from initDefaultConfig()
+uint32_t cls[LONG_CONFIGS];   //RAM values for use by master, mostly to save state through a reboot
+uint16_t cis[INT_CONFIGS];    //the configuration array, which contains unsigned 16 bit values. This gets defaults from initDefaultConfig()
 //and if there are EEPROM values, those are overridden
 
 uint8_t rxStorage[RX_SIZE];
@@ -424,17 +437,47 @@ void receiveEvent(int howMany) {
     uint8_t valueByteStart = 0;
     //if we issue a COMMAND_SET_CONFIG then the first byte after that command is an ordinal into the config array
     //and all the rest is the value that is to be set. this can be used for other purposes, but for now we just use it for this
-    if(command == COMMAND_SET_CONFIG) { 
+    if(command == COMMAND_SET_CONFIG || command == COMMAND_SET_LONG) { 
       ordinalLocation = buffer[0];
       valueByteStart = 1;
-    }
+    }  
+    
     for (uint8_t i = valueByteStart; i < bytesRead; i++) {
         value |= ((long)buffer[i] << (8 * (i-valueByteStart)));
     }
- 
+
     if (command == COMMAND_POPULATE_SERIAL_BUFFER) {
       //Serial.println("populating serial buffer");
       cbPutArray(txBuffer, buffer, bytesRead);
+
+
+    } else if (command == COMMAND_ENTER_BOOTLOADER) {
+        /*
+        //various attempts:
+        EEPROM.put(SLAVE_CONFIG-2, BOOT_MAGIC_VALUE); //let's try this via EEPROM
+        
+        // Ensure write completes before reset
+        asm volatile ("cli");
+        wdt_enable(WDTO_15MS);
+        */
+        _delay_ms(10);       // ensure EEPROM write completes
+
+
+   
+            
+        EEPROM.put(BOOT_MAGIC_ADDR, BOOT_MAGIC_VALUE);
+        //EEPROM.commit(); // optional on some platforms
+    
+        // Optionally wait a moment to ensure write completes
+        delay(10);
+        //let's try something else
+        // Soft jump to bootloader
+
+
+        // Enable watchdog reset immediately
+        wdt_enable(WDTO_15MS); // shortest timeout
+        while(1);              // wait for reset
+      
     } else if (command == COMMAND_RETRIEVE_SERIAL_BUFFER) {
       retrieveSerialData = true;
     } else if (command == COMMAND_FREEMEMORY) {
@@ -454,7 +497,11 @@ void receiveEvent(int howMany) {
     } else if (command == COMMAND_GET_CONFIG) {
       //Serial.println(cis[value]);
       dataToSend = cis[value]; //so far we can only retrieve individual integer config items
+    } else if (command == COMMAND_GET_LONG) {
+      dataToSend = cls[value];  
       //Serial.println(dataToSend);
+    } else if (command == COMMAND_SET_LONG) {
+      cls[ordinalLocation] = value; //so far we can only set individual integer config items
     } else if (command == COMMAND_SET_CONFIG) {
       //Serial.println(ordinalLocation);
       //Serial.println(value);
