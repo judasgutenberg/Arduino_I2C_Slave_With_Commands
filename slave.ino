@@ -12,7 +12,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2077 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
+#define VERSION 2084 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
 #define TARGET_SRAM_KILOBYTES 2 //2 for Atmega328, 8 for Atmega2560
 
 #define INT_CONFIGS 10
@@ -72,6 +72,7 @@
 #define COMMAND_TEMPERATURE         162   //a pseudo-random poor approximation of temperature
 #define COMMAND_FREEMEMORY          163   //returns free memory on the slave
 #define COMMAND_GET_SLAVE_CONFIG    164   //returns where in the EEPROM the slave's local configuration is persisted
+#define COMMAND_GET_PROCESSOR_TYPE  165   //returns an int representing the processor type
 
 //serial commands
 #define COMMAND_PARSE_BUFFER                169   //explicitly parse data in the txBuffer using the serial parser system
@@ -336,17 +337,19 @@ ISR(TIMER1_COMPA_vect) {
   }
 }
 
-void setupTimer1() {
+void setupTimer1(void)
+{
     cli();
-
     TCCR1A = 0;
     TCCR1B = 0;
-
-    OCR1A = 15624;               // 1 second
-    TCCR1B |= (1 << WGM12);      // CTC mode
+    OCR1A = 15624;                 // 1 second @ 8 MHz, prescaler 1024
+    TCCR1B |= (1 << WGM12);        // CTC mode
     TCCR1B |= (1 << CS12) | (1 << CS10); // prescaler 1024
-    TIMSK1 |= (1 << OCIE1A);     // enable compare interrupt
-
+#if defined(TIMSK1)
+    TIMSK1 |= (1 << OCIE1A);       // ATmega328/168/etc
+#else
+    TIMSK |= (1 << OCIE1A);        // ATmega32 / ATmega32A
+#endif
     sei();
 }
 
@@ -640,6 +643,10 @@ void handleCommand(byte command, uint32_t value) {
             dataToSend = VERSION;
             break;
 
+        case COMMAND_GET_PROCESSOR_TYPE:
+            dataToSend = processorType();
+            break;
+
         case COMMAND_TEMPERATURE:
             dataToSend = readInternalTemp;
             break;
@@ -917,11 +924,22 @@ int freeMemory() {
 void deepSleepForSeconds(uint32_t seconds) {
   while (seconds > 0) {
     if (seconds >= 8) {
-      setupWatchdogInterval((1 << WDP3) | (1 << WDP0)); // ~8s
+      #if defined(__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+        // ATmega32A max interval ~2s
+        setupWatchdogInterval((1 << WDP2) | (1 << WDP1)); // ~2s
+      #else
+        // modern AVR (328P, 168, 644P)
+        setupWatchdogInterval((1 << WDP3) | (1 << WDP0)); // ~8s
+      #endif
       sleepOnce();
       seconds -= 8;
     } else if (seconds >= 4) {
-      setupWatchdogInterval((1 << WDP3)); // ~4s
+      #if defined(__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+        #define WDT_INTERVAL ((1<<WDP2) | (1<<WDP1)) // ~2s max on 32A
+      #else
+        #define WDT_INTERVAL (1<<WDP3)                // ~4s on modern AVRs
+      #endif
+      setupWatchdogInterval(WDT_INTERVAL);
       sleepOnce();
       seconds -= 4;
     } else if (seconds >= 2) {
@@ -965,8 +983,16 @@ void sleepOnce() {
 void setupWatchdogInterval(uint8_t wdpBits) {
   cli();
   MCUSR &= ~(1 << WDRF);
-  WDTCSR |= (1 << WDCE) | (1 << WDE);
-  WDTCSR = (1 << WDIE) | wdpBits;
+  #if defined(__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+    WDTCR |= (1 << WDTOE) | (1 << WDE);  // ATmega32/32A
+  #else
+    WDTCSR |= (1 << WDCE) | (1 << WDE);  // modern AVRs
+  #endif
+  #if defined(__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+    WDTCR = (1 << WDE) | (1 << WDP2) | (1 << WDP1);  // ~2s max
+  #else
+    WDTCSR = (1 << WDIE) | wdpBits; // modern AVRs, e.g., ~4s or 8s
+  #endif
   sei();
 }
 
@@ -1477,6 +1503,44 @@ bool readSerialLine(char *line, uint8_t maxLen) {
     }
   }
   return false;
+}
+
+uint16_t processorType() {
+  uint16_t mcu = 0;
+  #if defined(__AVR_ATmega32__)
+    mcu = 32;
+  #elif defined(__AVR_ATmega32A__)
+    mcu = 33;
+  #elif defined(__AVR_ATmega8__)
+    mcu = 8;  
+  #elif defined(__AVR_ATmega8515__)
+    mcu = 8515;
+  #elif defined(__AVR_ATmega8535__)
+    mcu = 8535;
+  #elif defined(__AVR_ATmega16__)
+    mcu = 16;
+  #elif defined(__AVR_ATmega64__)
+    mcu = 64;
+  #elif defined(__AVR_ATmega128__)
+   mcu = 128;
+  #elif defined(__AVR_ATmega162__)
+    mcu = 162;
+  #elif defined(__AVR_ATmega88__)
+    mcu = 88;
+  #elif defined(__AVR_ATmega168__)
+    mcu = 168;  
+  #elif defined(__AVR_ATmega328P__)
+    mcu = 328;  
+  #elif defined(__AVR_ATmega32U__)
+    mcu = 34;  
+  #elif defined(__AVR_ATmega2560__)
+    mcu = 2560;  
+  #elif defined(__AVR_ATmega1284P__)
+    mcu = 1285;  
+  #elif defined(__AVR_ATmega1284__)
+    mcu = 1284;  
+  #endif
+  return mcu;
 }
 
  
