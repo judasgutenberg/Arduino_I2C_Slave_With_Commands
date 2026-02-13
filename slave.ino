@@ -12,8 +12,9 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2084 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
-#define TARGET_SRAM_KILOBYTES 2 //2 for Atmega328, 8 for Atmega2560
+#define VERSION 2088 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
+
+#define MEMSIZE ((RAMEND - SRAM_START) + 1) / 1024
 
 #define INT_CONFIGS 10
 #define LONG_CONFIGS 4
@@ -25,13 +26,16 @@
 //but we no longer even need this:
 //#define BOOTLOADER_START 0xF000 
 
-#if TARGET_SRAM_KILOBYTES <= 2
+#if MEMSIZE * 10 <= 1
+  #define RX_SIZE 10
+  #define TX_SIZE 10
+#elif MEMSIZE <= 2
   #define RX_SIZE 100
   #define TX_SIZE 100
-#elif TARGET_SRAM_KILOBYTES <= 4
+#elif MEMSIZE <= 4
   #define RX_SIZE 1000
   #define TX_SIZE 500 
-#elif TARGET_SRAM_KILOBYTES <= 8
+#elif MEMSIZE <= 8
   #define RX_SIZE 2000
   #define TX_SIZE 2000 
 #else
@@ -48,7 +52,7 @@
 #define REBOOT_PIN      8
 #define SERIAL_MODE     9 
 
-// Existing watchdog commands
+// Existing commands
 #define COMMAND_REBOOT              128   //reboots the slave asynchronously using the watchdog system
 #define COMMAND_MILLIS              129   //returns the millis() value of the slave 
 #define COMMAND_LASTWATCHDOGREBOOT  130   //millis() of the last time the slave sent a reboot signal to the master
@@ -73,6 +77,7 @@
 #define COMMAND_FREEMEMORY          163   //returns free memory on the slave
 #define COMMAND_GET_SLAVE_CONFIG    164   //returns where in the EEPROM the slave's local configuration is persisted
 #define COMMAND_GET_PROCESSOR_TYPE  165   //returns an int representing the processor type
+#define COMMAND_GET_MEMORY_SIZE     166   //returns an int representing the processor type
 
 //serial commands
 #define COMMAND_PARSE_BUFFER                169   //explicitly parse data in the txBuffer using the serial parser system
@@ -107,17 +112,22 @@
 //These configure the serial parser using data from the css array on the master (css is never actually produced on the slave - but it is stored in the EEPROM on the slave)
 //Making MAX_BLOCKS bigger than 3 will easily max-out the 2K of memory on an Atmega328. If you have complex parsing needs, use an Atmega2560 (8k of RAM!)
 
-#if TARGET_SRAM_KILOBYTES <= 2
+#if MEMSIZE <= 1
+  #define MAX_BLOCKS 1
+  #define MAX_ADDRS  1
+  #define MAX_OFFSETS 1
+  #define MAX_CFG_LEN 120
+#elif MEMSIZE <= 2
   #define MAX_BLOCKS 3
   #define MAX_ADDRS  3
   #define MAX_OFFSETS 8
   #define MAX_CFG_LEN 120
-#elif TARGET_SRAM_KILOBYTES <= 4
+#elif MEMSIZE <= 4
   #define MAX_BLOCKS 4
   #define MAX_ADDRS  3
   #define MAX_OFFSETS 8
   #define MAX_CFG_LEN 120
-#elif TARGET_SRAM_KILOBYTES <= 8
+#elif MEMSIZE <= 8
   #define MAX_BLOCKS 5
   #define MAX_ADDRS  4
   #define MAX_OFFSETS 10
@@ -645,6 +655,10 @@ void handleCommand(byte command, uint32_t value) {
 
         case COMMAND_GET_PROCESSOR_TYPE:
             dataToSend = processorType();
+            break;
+
+        case COMMAND_GET_MEMORY_SIZE:
+            dataToSend = RAMEND+1;
             break;
 
         case COMMAND_TEMPERATURE:
@@ -1542,5 +1556,8 @@ uint16_t processorType() {
   #endif
   return mcu;
 }
+
+ 
+ 
 
  
