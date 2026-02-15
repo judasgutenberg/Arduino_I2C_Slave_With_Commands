@@ -12,12 +12,13 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2091 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
+#define VERSION 2094 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
 
 #define MEMSIZE ((RAMEND - SRAM_START) + 1) / 1024
 
 #define INT_CONFIGS 10
 #define LONG_CONFIGS 4
+#define INCLUDE_PARSER 0
 
 #define BOOT_MAGIC_ADDR 510 
 #define BOOT_MAGIC_VALUE 0xB007
@@ -26,7 +27,9 @@
 //but we no longer even need this:
 //#define BOOTLOADER_START 0xF000 
 
-#if MEMSIZE * 10 <= 1
+
+
+#if MEMSIZE <= 1
   #define RX_SIZE 10
   #define TX_SIZE 10
 #elif MEMSIZE <= 2
@@ -150,7 +153,7 @@
 uint8_t parsedBuf[PARSED_BUF_MAX];// = {0xff, 0xff, 0x04, 0x00, 0x0a, 0x00, 0x01, 0x10}; //a packed register for returning parsed serial values
 uint8_t parsedStringPacketLen = 0;
 uint8_t parsedStringConfigCount = 0; //determined by actually looking at the EEPROM
-
+#if INCLUDE_PARSER
 struct ConfigBlock {
   char start[32];
   char end[32];
@@ -159,7 +162,7 @@ struct ConfigBlock {
   uint8_t offsets[MAX_ADDRS][MAX_OFFSETS];
   uint8_t offsetCount[MAX_ADDRS];
 };
-
+#endif
 
 //The serial parser (cis[SERIAL_MODE] == 2, 3 or 4) is configured with cstrings stored in EEPROM starting after the "DATA" intro at SLAVE_CONFIG bytes into the EEPROM
 //a typical parser config looks like: Characteristic #2;0x3ffbb61c;0x3ffbb5fc;4;5;6;7;8;9;10;11;0x3ffbb60c;0;1
@@ -180,8 +183,9 @@ offsets[1] = {0,1}
 offsetCount[0] = 8
 offsetCount[1] = 2
  */
-
+#if INCLUDE_PARSER
 ConfigBlock blocks[MAX_BLOCKS];
+#endif
 uint8_t blockCount = 0;
 int8_t activeBlock = -1;
 
@@ -277,7 +281,9 @@ void loop() {
     powerState++;
     //Serial.println(now);
     if(cis[BAUD_RATE_LEVEL] > 0 && (cis[SERIAL_MODE] == 2  || cis[SERIAL_MODE] == 3 || cis[SERIAL_MODE] == 4)) {
+      #if INCLUDE_PARSER
       processSerialStream();
+      #endif
     }
  
     if (eepromWritePending) {
@@ -506,7 +512,9 @@ void receiveEvent(int howMany) {
     } else if (command == COMMAND_SET_SERIAL_MODE) {
       cis[SERIAL_MODE] = value;
     } else if (command == COMMAND_PARSE_BUFFER) {
+      #if INCLUDE_PARSER
       processSerialStream();
+      #endif
     } else if (command == COMMAND_GET_CONFIG) {
       //Serial.println(cis[value]);
       dataToSend = cis[value]; //so far we can only retrieve individual integer config items
@@ -1128,15 +1136,17 @@ void initSlaveConfigFromEeprom() {
   addr += 21; //gotta bypass the integers at the bottom, assuming we know how many there are.  there should be five
   for(uint8_t i=0; i< MAX_BLOCKS; i++) {
     eepromReadCString(addr, cfg[i], sizeof(cfg[i]), addr, i);
+    #if INCLUDE_PARSER
     parseConfigString(cfg[i], blocks[i]);
     //dumpConfigBlock(blocks[i]);
     blockCount++;
+    #endif
   }
 }
 
 //////////////////////////////////////////////
 //parsing serial:
-
+#if INCLUDE_PARSER
 //only for debugging:
 void dumpConfigBlock(const ConfigBlock &b) {
   Serial.println(F("=== ConfigBlock ==="));
@@ -1325,6 +1335,7 @@ uint8_t extractHexBytes(const char *line,
   }
   return count;
 }
+
 
 void processSerialStream()
 {
@@ -1519,6 +1530,7 @@ bool readSerialLine(char *line, uint8_t maxLen) {
   }
   return false;
 }
+#endif
 
 uint16_t processorType() {
   uint16_t mcu = 0;
