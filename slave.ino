@@ -77,7 +77,7 @@
 #define COMMAND_FREEMEMORY          163   //returns free memory on the slave
 #define COMMAND_GET_SLAVE_CONFIG    164   //returns where in the EEPROM the slave's local configuration is persisted
 #define COMMAND_GET_PROCESSOR_TYPE  165   //returns an int representing the processor type
-#define COMMAND_GET_MEMORY_SIZE     166   //returns an int representing the processor type
+#define COMMAND_GET_MEMORY_SIZE     166   //returns the size in bytes of RAM space
 
 //serial commands
 #define COMMAND_PARSE_BUFFER                169   //explicitly parse data in the txBuffer using the serial parser system
@@ -1523,9 +1523,9 @@ bool readSerialLine(char *line, uint8_t maxLen) {
 uint16_t processorType() {
   uint16_t mcu = 0;
   #if defined(__AVR_ATmega32__)
-    mcu = 32;
+    mcu = 320;
   #elif defined(__AVR_ATmega32A__)
-    mcu = 33;
+    mcu = 321;
   #elif defined(__AVR_ATmega8__)
     mcu = 8;  
   #elif defined(__AVR_ATmega8515__)
@@ -1546,8 +1546,10 @@ uint16_t processorType() {
     mcu = 168;  
   #elif defined(__AVR_ATmega328P__)
     mcu = 328;  
-  #elif defined(__AVR_ATmega32U__)
-    mcu = 34;  
+  #elif defined(__AVR_ATmega32U4__)
+    mcu = 324;  
+  #elif defined(__AVR_ATmega32U2__)
+    mcu = 322;  
   #elif defined(__AVR_ATmega2560__)
     mcu = 2560;  
   #elif defined(__AVR_ATmega1284P__)
