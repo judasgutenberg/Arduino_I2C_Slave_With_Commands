@@ -12,7 +12,7 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2088 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
+#define VERSION 2091 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
 
 #define MEMSIZE ((RAMEND - SRAM_START) + 1) / 1024
 
@@ -658,7 +658,7 @@ void handleCommand(byte command, uint32_t value) {
             break;
 
         case COMMAND_GET_MEMORY_SIZE:
-            dataToSend = RAMEND+1;
+            dataToSend = (RAMEND - RAMSTART)+1;
             break;
 
         case COMMAND_TEMPERATURE:
@@ -691,13 +691,14 @@ void handleCommand(byte command, uint32_t value) {
 
 // ---- Software Reset ----
 void softwareReset(void) {
-    //return; // disabled for safety
     cli();
     TWCR = 0;
-    DDRC &= ~((1<<PC4) | (1<<PC5));
-    PORTC |= (1<<PC4) | (1<<PC5);
+
+    DDRD &= ~((1<<PD0) | (1<<PD1));   // SCL, SDA as inputs
+    PORTD |= (1<<PD0) | (1<<PD1);    // enable pull-ups
+
     wdt_enable(WDTO_15MS);
-    while(1) { }
+    while (1) { }
 }
 
 // ---- Utility ----
