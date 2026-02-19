@@ -48,7 +48,11 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 163: get free memory
 
-164:  get slave configuration
+164:  get slave configuration - where in the EEPROM the slave-specific configuration is stored
+
+165:  get an int representing the processor type
+
+166:  get the size in bytes of RAM space
 
 170: set serial baud rate and start serial port
 
