@@ -100,7 +100,10 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 205: pets the watchdog, telling it that it must be petted once every 100000 seconds or it can bite (reset!) -- only requires a pet once every day.  Useful, but not super responsive if the master should lock up.
 
-
 One particularly useful feature is the serial parser.  This is a system where a slave can be configured to monitor a serial line (one that may not actually attach to the master) looking for certain passages of text to focus on.  When it detects these, it can then look for data at offsets within these passages and then assemble integers from the data to place in a data packet for retrieval by the master.  This completely offloads serial parsing from the master.  I am using this feature to monitor serial traffic between a SolArk inverter and its WiFi dongle to capture important solar inverter data.
 
 Since an Atmega328 has a kilobyte of EEPROM, this can be used to store semi-volatile configuration data for a master, as EEPROM has much better wear characteristics than flash (the only storage option on a stock ESP32 or ESP8266 board).  An advantage of storing configuration data on the slave is that the slave then becomes the "personality module."  This means the masters can all run identical firmware, and you distinguish them by either giving them slaves containing different EEPROM configurations or you set their personalities up remotely.
+
+
+# About the Files in the this Repository #
+The slave firmware is entirely in slave.ino.  All the other files provide libraries for code to be run on a master that controls the slave via I2C.
