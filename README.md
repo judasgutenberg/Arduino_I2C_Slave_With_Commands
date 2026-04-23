@@ -106,4 +106,4 @@ Since an Atmega328 has a kilobyte of EEPROM, this can be used to store semi-vola
 
 
 # About the Files in the this Repository #
-The slave firmware is entirely in slave.ino.  All the other files provide libraries for code to be run on a master that controls the slave via I2C.
+The slave firmware is entirely in slave.ino.  All the other files provide libraries for code to be run on a master that controls the slave via I2C, and were written to run on an ESP8266, but are fairly generic and could be made to run on various other architectures.
