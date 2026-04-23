@@ -24,7 +24,7 @@ This version adds the ability for an Arduino Slave to run a number of commands i
 
 130: return millis() of last watchdog reboot from slave (0 for never rebooted)
 
-131: return number of reboots since the slave booted
+131: return number of slave-initiated master reboots since the slave booted
 
 132: return millis of last time watchdog was petted (0 for never petted)
 
