@@ -12,13 +12,13 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h> // needed for EEPROM read/write
 
-#define VERSION 2094 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
+#define VERSION 2103 //enabled COMMAND_REBOOT, set unix time for last data parse, allow jump to bootloader for Atmega328p and Atmega644p
 
 #define MEMSIZE ((RAMEND - SRAM_START) + 1) / 1024
 
 #define INT_CONFIGS 10
 #define LONG_CONFIGS 4
-#define INCLUDE_PARSER 0
+#define INCLUDE_PARSER 1
 
 #define BOOT_MAGIC_ADDR 510 
 #define BOOT_MAGIC_VALUE 0xB007
@@ -480,9 +480,6 @@ void receiveEvent(int howMany) {
         wdt_enable(WDTO_15MS);
         */
         _delay_ms(10);       // ensure EEPROM write completes
-
-
-   
             
         EEPROM.put(BOOT_MAGIC_ADDR, BOOT_MAGIC_VALUE);
         //EEPROM.commit(); // optional on some platforms
@@ -535,6 +532,68 @@ void receiveEvent(int howMany) {
       multiRequestOffset = value;
     } else if (command == COMMAND_GET_PARSED_SERIAL_DATA) {
       retrieveParsedSerialData = true;
+    } else if (command == COMMAND_REBOOT) {
+      deferredCommand = command;
+      deferredParameter = value;
+    } else if (command == COMMAND_SLEEP) {
+      deferredCommand = command;
+      deferredParameter = value;
+    } else if (command == COMMAND_DEEP_SLEEP) {
+      deferredCommand = command;
+      deferredParameter = value;
+    } else if (command == COMMAND_MILLIS) {
+      dataToSend = millis();
+    } else if (command == COMMAND_LASTWATCHDOGREBOOT) {
+      dataToSend = lastWatchdogReboot;
+    } else if (command == COMMAND_WATCHDOGREBOOTCOUNT) {
+      dataToSend = rebootCount;
+    } else if (command == COMMAND_LASTPETATBITE) {
+      dataToSend = lastPetAtBite;
+    } else if (command == COMMAND_LASTWATCHDOGPET) {
+      dataToSend = lastWatchdogPet;
+    } else if (command == COMMAND_REBOOTMASTER) {
+      TWCR &= ~(_BV(TWEN));
+      delay(100);
+      rebootMaster();
+      delay(200);
+      TWCR |= _BV(TWEN);
+    } else if (command == COMMAND_COMPILEDATETIME) {
+      dataToSend = compileUnixTime();      
+    } else if (command == COMMAND_VERSION) {
+      dataToSend = VERSION;
+    } else if (command == COMMAND_GET_PROCESSOR_TYPE) {
+      dataToSend = processorType();
+    } else if (command == COMMAND_GET_MEMORY_SIZE) {
+      dataToSend = (RAMEND - RAMSTART)+1;
+
+    } else if (command == COMMAND_TEMPERATURE) {
+      dataToSend = readInternalTemp;
+    } else if (command == COMMAND_SERIAL_SET_BAUD_RATE) {
+      setSerialRate(value);
+    //EEPROM COMMANDS:
+    } else if (command == COMMAND_EEPROM_SETADDR) {
+      eepromAddress = value & 0x03FF; // 0..1023
+    } else if (command == COMMAND_EEPROM_WRITE) {
+      eepromMode = 1;
+      if (bytesRead > 0) {
+          for (int i = 0; i < bytesRead; i++) {
+              //EEPROM.update(eepromAddress, buffer[i]);
+              //eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
+              //Serial.print((char)buffer[i]); 
+              eepromWriteBuffer[i] = buffer[i];
+              
+              eepromWriteLength = bytesRead;
+              
+          }
+          //Serial.println("^");
+          eepromWritePending = true;
+      }
+    } else if (command == COMMAND_EEPROM_READ) {
+      eepromMode = 2;
+      eepromReadCount = value;
+    } else if (command == COMMAND_EEPROM_NORMAL) {
+      eepromMode = 0;  // back to normal behavior
+      
     } else if (command == COMMAND_GET_PARSED_DATUM) {
       uint16_t retrieved = 0;
       if(value + 1 < PARSED_BUF_MAX) {
@@ -548,49 +607,10 @@ void receiveEvent(int howMany) {
         }
       }
       dataToSend = (uint32_t)retrieved;
-    // ---- EEPROM Commands ----
-    } else if (command >= COMMAND_EEPROM_SETADDR && command <= COMMAND_EEPROM_NORMAL) {
-        switch (command) {
-            case COMMAND_EEPROM_SETADDR:
-                eepromAddress = value & 0x03FF; // 0..1023
-                break;
-
-            case COMMAND_EEPROM_WRITE:
-                eepromMode = 1;
-                if (bytesRead > 0) {
-                    for (int i = 0; i < bytesRead; i++) {
-                        //EEPROM.update(eepromAddress, buffer[i]);
-                        //eepromAddress = (eepromAddress + 1) % EEPROM_SIZE;
-                        //Serial.print((char)buffer[i]); 
-                        eepromWriteBuffer[i] = buffer[i];
-                        
-                        eepromWriteLength = bytesRead;
-                        
-                    }
-                    //Serial.println("^");
-                    eepromWritePending = true;
-                }
-                
-                break;
-                
-            case COMMAND_EEPROM_READ:
-                //Serial.print("EEPROM READ MODE");
-                //Serial.print(": ");
-                //Serial.println((int)value);
-                eepromMode = 2;
-                eepromReadCount = value;
-                break;
-
-            case COMMAND_EEPROM_NORMAL:
-                eepromMode = 0;  // back to normal behavior
-                break;
-        }
-        return; // handled, skip other logic
-    }
-
-    // ---- Existing pin/write logic ----
-    if (command >= 128) {
-        handleCommand(command, value);
+    //watchdog petting, etc:
+    } else if (command >= 200  && command < 210) {
+        watchdogConfigureAndPet(command, value);
+    //original Arduino Slave pin-value-setting behavior
     } else if (bytesRead > 0) {
         pinMode(command, OUTPUT);
         if (value == 0) {
@@ -611,90 +631,20 @@ void receiveEvent(int howMany) {
 }
 
 // ---- Command Handler ----
-void handleCommand(byte command, uint32_t value) {
-    switch (command) {
-        case COMMAND_REBOOT:
-            deferredCommand = command;
-            deferredParameter = value;
-            break;
-        case COMMAND_SLEEP:
-            deferredCommand = command;
-            deferredParameter = value;
-            break;
-        case COMMAND_DEEP_SLEEP:
-            deferredCommand = command;
-            deferredParameter = value;
-            break;
-        case COMMAND_MILLIS:
-            dataToSend = millis();
-            break;
-
-        case COMMAND_LASTWATCHDOGREBOOT:
-            dataToSend = lastWatchdogReboot;
-            break;
-
-        case COMMAND_WATCHDOGREBOOTCOUNT:
-            dataToSend = rebootCount;
-            break;
-
-        case COMMAND_LASTPETATBITE:
-            dataToSend = lastPetAtBite;
-            break;
-
-        case COMMAND_LASTWATCHDOGPET:
-            dataToSend = lastWatchdogPet;
-            break;
-
-        case COMMAND_REBOOTMASTER:
-            TWCR &= ~(_BV(TWEN));
-            delay(100);
-            rebootMaster();
-            delay(200);
-            TWCR |= _BV(TWEN);
-            break;
-
-        case COMMAND_COMPILEDATETIME:
-            dataToSend = compileUnixTime();
-            break;
-
-        case COMMAND_VERSION:
-            dataToSend = VERSION;
-            break;
-
-        case COMMAND_GET_PROCESSOR_TYPE:
-            dataToSend = processorType();
-            break;
-
-        case COMMAND_GET_MEMORY_SIZE:
-            dataToSend = (RAMEND - RAMSTART)+1;
-            break;
-
-        case COMMAND_TEMPERATURE:
-            dataToSend = readInternalTemp;
-            break;
-
-        case COMMAND_SERIAL_SET_BAUD_RATE:
-          setSerialRate(value);
-          break;
-            
-        default:
-            if(command > 199 && command < 210) {
-                byte watchdogTimingIndication = command - COMMAND_WATCHDOGPETBASE;
-                if(lastTimeoutScale != watchdogTimingIndication) {
-                    watchdogTimeout = 1;
-                    for (byte i = 0; i < watchdogTimingIndication; i++) {
-                        watchdogTimeout *= 10;
-                    }
-                    lastTimeoutScale = watchdogTimingIndication;
-                    if(value > 0) {
-                      unixTime = value;
-                    }
-                }
-                lastWatchdogPet = millis();
-                dataToSend = lastWatchdogPet;
-            }
-            break;
-    }
+void watchdogConfigureAndPet(byte command, uint32_t value) {
+  byte watchdogTimingIndication = command - COMMAND_WATCHDOGPETBASE;
+  if(lastTimeoutScale != watchdogTimingIndication) {
+      watchdogTimeout = 1;
+      for (byte i = 0; i < watchdogTimingIndication; i++) {
+          watchdogTimeout *= 10;
+      }
+      lastTimeoutScale = watchdogTimingIndication;
+      if(value > 0) {
+        unixTime = value;
+      }
+  }
+  lastWatchdogPet = millis();
+  dataToSend = lastWatchdogPet;
 }
 
 // ---- Software Reset ----
